@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "ISystem.h"
 #include <vector>
 #include "../../externals/entt/entt.hpp"
@@ -26,6 +26,17 @@ private:
     void ProcessButton(entt::entity entity, entt::registry& registry, UIButtonComponent& btn, float worldX, float worldY, float worldW, float worldH, GameContext& ctx);
     
     float deathTimer_ = 0.0f;
+
+    // Command Room UI State
+    bool isCommandRoomMinimized_ = false;
+    int commandRoomPlacement_ = 0; // 0 = Bottom, 1 = Right
+    int currentTab_ = 1; // 0 = Command, 1 = Shop, 2 = Status
+    
+    // Mock Game Data for Prototype
+    int playerGold_ = 1200;
+    int totalEnemiesDefeated_ = 19;
+    int totalDamageDealt_ = 1150;
+    int totalItemsAcquired_ = 8;
 };
 
 } // namespace Game

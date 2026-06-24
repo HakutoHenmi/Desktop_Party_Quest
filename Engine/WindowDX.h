@@ -9,6 +9,8 @@
 #include <dxgi1_6.h>
 #include <string>
 #include <wrl.h>
+#include <dcomp.h>
+#pragma comment(lib, "dcomp.lib")
 
 // ★追加: 時間計測用
 #include <chrono>
@@ -83,6 +85,10 @@ private:
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> dsvH_;
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> srvH_;
 	Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> srvH_CPU_; // ★追加: 非ShaderVisible
+
+	Microsoft::WRL::ComPtr<IDCompositionDevice> dcompDevice_;
+	Microsoft::WRL::ComPtr<IDCompositionTarget> dcompTarget_;
+	Microsoft::WRL::ComPtr<IDCompositionVisual> dcompVisual_;
 
 	Microsoft::WRL::ComPtr<ID3D12Resource> back_[kBackBufferCount];
 	Microsoft::WRL::ComPtr<ID3D12Resource> depth_;

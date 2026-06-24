@@ -23,7 +23,7 @@ namespace Updater
 
             if (args.Length == 0)
             {
-                MessageBox.Show("エラー: ダウンロードURLが指定されていません。\nこのプログラムはSae本体から自動的に呼び出されます。", "Sae Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("エラー: ダウンロードURLが指定されていません。\nこのプログラムはDesktop_Party_Quest本体から自動的に呼び出されます。", "Desktop Party Quest Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
@@ -35,7 +35,7 @@ namespace Updater
 
             mainForm = new Form
             {
-                Text = "Sae Updater",
+                Text = "Desktop Party Quest Updater",
                 Size = new Size(420, 180),
                 StartPosition = FormStartPosition.CenterScreen,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -47,7 +47,7 @@ namespace Updater
 
             statusLabel = new Label
             {
-                Text = language == 1 ? "Waiting for Sae to close..." : "Sae の終了を待機しています...",
+                Text = language == 1 ? "Waiting for Desktop Party Quest to close..." : "Desktop Party Quest の終了を待機しています...",
                 Location = new Point(25, 25),
                 Size = new Size(350, 30),
                 Font = new Font("MS Gothic", 10, FontStyle.Regular),
@@ -77,7 +77,7 @@ namespace Updater
                 catch (Exception ex)
                 {
                     string errorMsg = language == 1 ? "An error occurred during the update:\n" : "アップデート中にエラーが発生しました:\n";
-                    MessageBox.Show(errorMsg + ex.Message, "Sae Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show(errorMsg + ex.Message, "Desktop Party Quest Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     mainForm.Close();
                 }
             };
@@ -88,10 +88,10 @@ namespace Updater
         static async Task RunUpdateAsync(string downloadUrl)
         {
             string zipPath = "update.zip";
-            const string targetProcessName = "Sae";
+            const string targetProcessName = "Desktop_Party_Quest";
 
             // 1. プロセス終了待機
-            UpdateStatus(language == 1 ? "Waiting for Sae to close..." : "Sae の終了を待機しています...", 10);
+            UpdateStatus(language == 1 ? "Waiting for Desktop Party Quest to close..." : "Desktop Party Quest の終了を待機しています...", 10);
             int retries = 30;
             while (retries > 0)
             {
@@ -123,7 +123,7 @@ namespace Updater
             UpdateStatus(language == 1 ? "Downloading update..." : "アップデートをダウンロードしています...", 20);
             using (var client = new HttpClient())
             {
-                client.DefaultRequestHeaders.Add("User-Agent", "Sae Updater/1.0");
+                client.DefaultRequestHeaders.Add("User-Agent", "DesktopPartyQuest Updater/1.0");
                 using (var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead))
                 {
                     response.EnsureSuccessStatusCode();
@@ -205,7 +205,7 @@ namespace Updater
             // 6. 本体再起動
             var psi = new ProcessStartInfo
             {
-                FileName = "Sae.exe",
+                FileName = "Desktop_Party_Quest.exe",
                 UseShellExecute = true
             };
             Process.Start(psi);

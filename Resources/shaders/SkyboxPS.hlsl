@@ -24,14 +24,13 @@ struct PSIn {
 float4 main(PSIn p) : SV_TARGET {
     float3 dir = normalize(p.texCoord);
     
-    float3 color;
     if (gUseCubemapBackground != 0) {
         // Cubemapから景色をサンプリング
-        color = gCubeMap.Sample(gSampler, dir).rgb;
+        float3 color = gCubeMap.Sample(gSampler, dir).rgb;
+        return float4(0.0, 0.0, 0.0, 0.0); // ★強制的に透明な黒を返す
     } else {
-        // 超高速化＆軽量化された美しい宇宙空間の生成（TDRの原因を取り除いた完全版）
-        color = GetProceduralSpaceColor(dir, gTime);
+        // ★修正: 透過デスクトップアプリのため、背景を使わない場合は「完全に透明な黒」を出力する
+        // これにより、このピクセルはOS(DWM)側でデスクトップ画面として透過表示される
+        return float4(0.0, 0.0, 0.0, 0.0);
     }
-
-    return float4(color, 1.0);
 }

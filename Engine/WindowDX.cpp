@@ -9,6 +9,9 @@
 #include <shellapi.h>
 #include <string>
 
+#include <dwmapi.h>
+#pragma comment(lib, "dwmapi.lib")
+
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "imm32.lib") // ★追加: IME操作用
@@ -316,40 +319,32 @@ bool WindowDX::InitWindow_(HINSTANCE hInst, int cmdShow, HWND& outHwnd) {
 	RegisterClassEx(&wc_);
 
 	DWORD style = WS_POPUP; // 完全ボーダレス
-	DWORD exStyle = WS_EX_APPWINDOW;
+	// ★DirectCompositionを使うため、WS_EX_LAYEREDは外し、WS_EX_NOREDIRECTIONBITMAPを使います。
+	DWORD exStyle = WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
 
 	RECT rc = {0, 0, (LONG)kW, (LONG)kH};
 	AdjustWindowRectEx(&rc, style, FALSE, exStyle);
 
-	// 初期作成時は画面中央付近に配置
-	int screenW = GetSystemMetrics(SM_CXSCREEN);
-	int screenH = GetSystemMetrics(SM_CYSCREEN);
-	int wx = (screenW - (rc.right - rc.left)) / 2;
-	int wy = (screenH - (rc.bottom - rc.top)) / 2;
-	hwnd_ = CreateWindowExW(exStyle, wc_.lpszClassName, L"心穏やかな場所", style, wx, wy, rc.right - rc.left, rc.bottom - rc.top, nullptr, nullptr, hInst, nullptr);
+	// ワークエリアの取得 (タスクバー領域を除いたデスクトップ領域)
+	RECT workArea;
+	SystemParametersInfo(SPI_GETWORKAREA, 0, &workArea, 0);
+
+	int wx = workArea.left;
+	int wy = workArea.top;
+	int wWidth = workArea.right - workArea.left;
+	int wHeight = workArea.bottom - workArea.top;
+
+	hwnd_ = CreateWindowExW(exStyle, wc_.lpszClassName, L"Desktop_Party_Quest", style, wx, wy, wWidth, wHeight, nullptr, nullptr, hInst, nullptr);
 
 	if (!hwnd_)
 		return false;
 
-	// ウィンドウの中身（クライアント領域）が指定サイズとズレていないか確認し、ズレていれば補正する
-	RECT rcClient;
-	GetClientRect(hwnd_, &rcClient);
-	int clientW = rcClient.right - rcClient.left;
-	int clientH = rcClient.bottom - rcClient.top;
+	// DWMのフレーム拡張により、クライアント領域全体を透過として扱うように指示する
+	MARGINS margins = { -1, -1, -1, -1 };
+	DwmExtendFrameIntoClientArea(hwnd_, &margins);
 
-	if (clientW != kW || clientH != kH) {
-		RECT rcWindow;
-		GetWindowRect(hwnd_, &rcWindow);
-		int windowW = rcWindow.right - rcWindow.left;
-		int windowH = rcWindow.bottom - rcWindow.top;
-
-		// 足りない分（または多い分）を計算
-		int diffW = (int)kW - clientW;
-		int diffH = (int)kH - clientH;
-
-		// 正しいサイズにリサイズ
-		SetWindowPos(hwnd_, 0, 0, 0, windowW + diffW, windowH + diffH, SWP_NOMOVE | SWP_NOZORDER);
-	}
+	// ★FSO (Full Screen Optimization) による強制不透明化を避けるため、意図的に1px小さくする
+	SetWindowPos(hwnd_, nullptr, 0, 0, wWidth - 1, wHeight, SWP_NOMOVE | SWP_NOZORDER);
 
 	DragAcceptFiles(hwnd_, TRUE);
 
@@ -391,19 +386,40 @@ bool WindowDX::CreateSwapchain_() {
 	DXGI_SWAP_CHAIN_DESC1 sd{};
 	sd.Width = kW;
 	sd.Height = kH;
-	sd.Format = DXGI_FORMAT_B8G8R8A8_UNORM; // 背景透過のAlphaModeに対応するためB8G8R8A8を使用
+	sd.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
 	sd.SampleDesc.Count = 1;
 	sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	sd.BufferCount = kBackBufferCount;
 	sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-	sd.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED; // CreateSwapChainForHwndではUNSPECIFIEDである必要がある（DWMが自動で透過処理する）
-	sd.Scaling = DXGI_SCALING_STRETCH; 
+	sd.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED; // ★DirectCompositionならPREMULTIPLIEDが使える
+	sd.Scaling = DXGI_SCALING_STRETCH;
 
 	Microsoft::WRL::ComPtr<IDXGISwapChain1> sc;
-	if (FAILED(factory_->CreateSwapChainForHwnd(que_.Get(), hwnd_, &sd, nullptr, nullptr, &sc)))
+	// DirectComposition用のスワップチェーンを作成
+	if (FAILED(factory_->CreateSwapChainForComposition(que_.Get(), &sd, nullptr, &sc)))
 		return false;
 	sc.As(&swap_);
 	fi_ = swap_->GetCurrentBackBufferIndex();
+
+	// DirectCompositionの初期化
+	if (FAILED(DCompositionCreateDevice(nullptr, IID_PPV_ARGS(&dcompDevice_))))
+		return false;
+
+	if (FAILED(dcompDevice_->CreateTargetForHwnd(hwnd_, TRUE, &dcompTarget_)))
+		return false;
+
+	if (FAILED(dcompDevice_->CreateVisual(&dcompVisual_)))
+		return false;
+
+	if (FAILED(dcompVisual_->SetContent(swap_.Get())))
+		return false;
+
+	if (FAILED(dcompTarget_->SetRoot(dcompVisual_.Get())))
+		return false;
+
+	if (FAILED(dcompDevice_->Commit()))
+		return false;
+
 	return true;
 }
 
