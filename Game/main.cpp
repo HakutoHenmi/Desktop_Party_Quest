@@ -2,11 +2,8 @@
 #include "MainScene.h"
 #include <Windows.h>
 #include <memory>
-#include <winrt/Windows.Foundation.h>
-
 int WINAPI WinMain(_In_ HINSTANCE hInst, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int cmdShow) {
 	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-	winrt::init_apartment(winrt::apartment_type::multi_threaded);
 
 	// カレントディレクトリをexeの場所に設定
 	{
@@ -18,10 +15,10 @@ int WINAPI WinMain(_In_ HINSTANCE hInst, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ in
 			if (lastSlash)
 				*lastSlash = L'\0';
 
-			// プロジェクトルートを探す (Sae ディレクトリ)
+			// プロジェクトルートを探す (Desktop_Party_Quest ディレクトリ)
 			wchar_t projectPath[32768] = {};
 			wcscpy_s(projectPath, exePath);
-			wcscat_s(projectPath, L"\\..\\..\\..\\Sae");
+			wcscat_s(projectPath, L"\\..\\..\\..\\Desktop_Party_Quest");
 
 			DWORD attr = GetFileAttributesW(projectPath);
 			if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {

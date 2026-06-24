@@ -25,6 +25,7 @@ bool ImGuiLayer::Initialize(
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+	io.IniFilename = nullptr; // ★過去のエディタレイアウト(全画面DockSpace等)による黒塗りつぶしを防ぐため無効化
 	ImGui::StyleColorsDark();
 
 	ImGuiStyle& style = ImGui::GetStyle();
@@ -51,7 +52,7 @@ bool ImGuiLayer::Initialize(
 
 	if (!ImGui_ImplWin32_Init(hwnd))
 		return false;
-	if (!ImGui_ImplDX12_Init(dx.Dev(), WindowDX::kBackBufferCount, DXGI_FORMAT_R8G8B8A8_UNORM, srvHeap_, fontCpuHandle, fontGpuHandle))
+	if (!ImGui_ImplDX12_Init(dx.Dev(), WindowDX::kBackBufferCount, DXGI_FORMAT_B8G8R8A8_UNORM, srvHeap_, fontCpuHandle, fontGpuHandle))
 		return false;
 
 	{

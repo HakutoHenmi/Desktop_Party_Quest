@@ -1,4 +1,4 @@
-﻿#include "UISystem.h"
+#include "UISystem.h"
 #include "../ObjectTypes.h"
 #include "../../Engine/Renderer.h"
 #include "../../Engine/Input.h"
@@ -100,11 +100,12 @@ void UISystem::Draw(entt::registry& registry, GameContext& ctx) {
 void UISystem::DrawUI(entt::registry& /*registry*/, GameContext& ctx) {
     if (!ctx.camera) return;
 
-#ifdef USE_IMGUI
-    ImDrawList* drawList = ImGui::GetForegroundDrawList(); 
-    if (!drawList) return;
-    if (!ctx.scene) return;
-#endif
+    // ImGuiによる描画を廃止し、エンジンのネイティブUIコンポーネントを使用します。
+    // （UIのエンティティ自体はMainScene等の初期化時に作成する想定ですが、
+    // 　ここでは必要最低限の描画として、仮のテキストを画面右下に表示します）
+
+    // もしすでにネイティブUIエンティティが登録されていれば、Draw()関数内で自動描画されます。
+    // なので、ここでは特別な直接描画は必要ありません。
 }
 
 bool UISystem::WorldToScreen(const DirectX::XMFLOAT3& worldPos, const Engine::Camera& camera, float& screenX, float& screenY) {

@@ -53,7 +53,8 @@ float4 main(PSIn i) : SV_TARGET
     edge = saturate(edge * strength);
 
     // 元の色を取得
-    float3 sceneColor = gScene.Sample(gSmp, i.uv).rgb;
+    float4 sceneSample = gScene.Sample(gSmp, i.uv);
+    float3 sceneColor = sceneSample.rgb;
 
     // エッジ部分を暗くする（アウトライン描画）
     // gChromaShift > 0 ならエッジのみ表示モード
@@ -73,5 +74,5 @@ float4 main(PSIn i) : SV_TARGET
     float2 d = i.uv - 0.5;
     col *= saturate(1.0 - dot(d, d) * gVignette);
 
-    return float4(Saturate3(col), 1.0);
+    return float4(Saturate3(col), sceneSample.a);
 }

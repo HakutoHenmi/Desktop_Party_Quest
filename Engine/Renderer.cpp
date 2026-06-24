@@ -446,7 +446,7 @@ void Renderer::FlushDrawCalls() {
 	D3D12_GPU_DESCRIPTOR_HANDLE defaultSrv = textures_[0].srvGpu;
 
 	// ★追加: Skybox描画（最背面、全ドローコールの前）
-	DrawSkybox();
+	// DrawSkybox(); // ★削除要求によりコメントアウト
 
 	// ★RootSignatureを3D用に戻す（DrawSkyboxで変更されたため）
 	list_->SetGraphicsRootSignature(rootSig3D_.Get());
@@ -1010,9 +1010,7 @@ void Renderer::EndFrame() {
 	list_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	list_->DrawInstanced(3, 1, 0, 0);
 
-	// ★UI描画順序の変更: ポストプロセス適用後のGameビュー用テクスチャにUIを直接描画することで、エディタ上でもUIが表示されるようにします。
-	FlushSprites();
-	FlushText();
+	// ★修正: UI描画順序を移動。ここでは finalSceneColor_ にUIを描画しない。
 
 	if (finalSceneState_ != D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) {
 		auto b = CD3DX12_RESOURCE_BARRIER::Transition(finalSceneColor_.Get(), finalSceneState_, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -1034,10 +1032,17 @@ void Renderer::EndFrame() {
 	list_->RSSetViewports(1, &fullVP);
 	list_->RSSetScissorRects(1, &fullScissor);
 
+	// シーン描画のコピー処理（このゲームは2Dメインなので不要。これを呼ばないことで透過が完璧に機能する）
+	/*
 	list_->SetPipelineState(psoCopyToBackBuffer_.Get());
 	list_->SetGraphicsRootSignature(rootSigPP_.Get());
 	list_->SetGraphicsRootDescriptorTable(1, finalSrvGpu_);
 	list_->DrawInstanced(3, 1, 0, 0);
+	*/
+
+	// ★UIを透過状態のバックバッファに直接描画する
+	FlushSprites();
+	FlushText();
 }
 
 void Renderer::SetCamera(const Camera& camera) {
@@ -2872,9 +2877,23 @@ float4 main(float4 svpos:SV_POSITION, float2 uv:TEXCOORD0) : SV_TARGET {
 			pso.PS = { psCopy->GetBufferPointer(), psCopy->GetBufferSize() };
 			dev_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&psoCopy_)); // G-Buffer等へのコピー用(R8G8B8A8)
 			
+			// ★追加: スワップチェーン(B8G8R8A8)書き込み用の特別なBlendState
+			D3D12_BLEND_DESC bDesc = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+			bDesc.RenderTarget[0].BlendEnable = TRUE;
+			bDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_ONE;
+			bDesc.RenderTarget[0].DestBlend = D3D12_BLEND_ZERO;
+			bDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+			bDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+			bDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+			bDesc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+			bDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+			pso.BlendState = bDesc;
+
 			pso.RTVFormats[0] = DXGI_FORMAT_B8G8R8A8_UNORM; // バックバッファ描画用なのでフォーマットを合わせる
 			dev_->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&psoCopyToBackBuffer_));
+			
 			pso.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM; // 元に戻す
+			pso.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT); // BlendStateも元に戻す
 		}
 
 		// ★追加: Rich PostProcess パイプライン

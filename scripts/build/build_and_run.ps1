@@ -27,7 +27,7 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-$exePath = Join-Path $PSScriptRoot "..\..\..\Generated\Outputs\$Configuration\DirectXGameApp.exe"
+$exePath = Join-Path $PSScriptRoot "..\..\..\Generated\Outputs\$Configuration\Desktop_Party_Quest.exe"
 $exePath = [System.IO.Path]::GetFullPath($exePath)
 if (Test-Path $exePath) {
     $exeDir = Split-Path $exePath -Parent
