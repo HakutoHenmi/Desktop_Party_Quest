@@ -114,6 +114,9 @@ bool Renderer::Initialize(WindowDX* window) {
 		subData.RowPitch = 4;
 		subData.SlicePitch = 4;
 		UpdateSubresources(cmd.Get(), t.res.Get(), uploadBuf.Get(), 0, 0, 1, &subData);
+		
+		// ★アップロードバッファの寿命を保つために pendingUploads_ に追加
+		pendingUploads_.push_back({nullptr, nullptr, uploadBuf, 3});
 
 		// 4. バリア変更
 		CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(t.res.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -1604,9 +1607,9 @@ float4 main(VSIn v, uint instanceID : SV_InstanceID) : SV_POSITION {
 		blend.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
 		blend.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
 		blend.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
-		// ★修正: アルファチャネルは常に最大値を維持し、スプライトのアルファ値でRTのアルファを破壊しない
-		blend.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ZERO;
-		blend.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ONE;
+		// ★修正: DWMの透過デスクトップ用に、アルファ値も正しく書き込んで不透明/半透明を実現する
+		blend.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+		blend.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
 		blend.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
 		blend.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 		pso.BlendState = blend;
@@ -2263,7 +2266,7 @@ void Renderer::DrawSkinnedMesh(MeshHandle meshH, TextureHandle texH, const Matri
 }
 
 void Renderer::DrawSprite(TextureHandle texH, const SpriteDesc& s) {
-	if (texH == 0 || texH >= textures_.size()) return;
+	if (texH >= textures_.size()) return;
 	spriteDrawCalls_.push_back({ texH, s });
 }
 
@@ -2419,9 +2422,11 @@ void Renderer::FlushSprites() {
 
 // ★追加: テキスト描画システム
 
-bool Renderer::InitTextSystem(const std::string& fontPath, float pixelHeight) {
+bool Renderer::InitTextSystem(const std::string& fontPath, float pixelHeight, const std::string& cacheKeyOpt) {
+	std::string cacheKey = cacheKeyOpt.empty() ? fontPath : cacheKeyOpt;
+
 	// 既にこのフォントがロード済みなら何もしない
-	if (glyphCaches_.count(fontPath)) return true;
+	if (glyphCaches_.count(cacheKey)) return true;
 
 	std::string actualPath = PathUtils::GetUnifiedPath(fontPath);
 
@@ -2434,7 +2439,7 @@ bool Renderer::InitTextSystem(const std::string& fontPath, float pixelHeight) {
 			return false; // それでもダメなら諦める
 		}
 	}
-	glyphCaches_[fontPath] = std::move(cache);
+	glyphCaches_[cacheKey] = std::move(cache);
 
 	// テキスト描画用 PSO が未作成なら作成 (初回のみ)
 	if (!psoText_) {
@@ -2506,11 +2511,15 @@ float4 main(PSIn i) : SV_TARGET {
 }
 
 void Renderer::DrawString(const std::string& text, float x, float y, float scale, const Vector4& color, const std::string& fontPath) {
+	float actualFontSize = std::round(scale * 64.0f);
+	if (actualFontSize <= 0.0f) return;
+	std::string cacheKey = fontPath + "_" + std::to_string(static_cast<int>(actualFontSize));
+
 	// フォントが未ロードなら遅延初期化
-	if (!glyphCaches_.count(fontPath)) {
-		if (!InitTextSystem(fontPath, 64.0f)) return;
+	if (!glyphCaches_.count(cacheKey)) {
+		if (!InitTextSystem(fontPath, actualFontSize, cacheKey)) return;
 	}
-	auto& cache = glyphCaches_[fontPath];
+	auto& cache = glyphCaches_[cacheKey];
 	if (!cache || !cache->IsInitialized()) return;
 
 	const float W = static_cast<float>(Engine::WindowDX::kW);
@@ -2521,23 +2530,24 @@ void Renderer::DrawString(const std::string& text, float x, float y, float scale
 	float cursorX = x;
 	float cursorY = y;
 
+	float internalScale = 1.0f;
 	int ascent = cache->GetAscent();
-	float scaledAscent = ascent * scale;
+	float scaledAscent = ascent * internalScale;
 
-	auto& vertices = textVerticesMap_[fontPath];
+	auto& vertices = textVerticesMap_[cacheKey];
 
 	for (uint32_t cp : codepoints) {
 		// 改行処理
 		if (cp == '\n') {
 			cursorX = x;
-			cursorY += cache->GetLineHeight() * scale;
+			cursorY += cache->GetLineHeight() * internalScale;
 			continue;
 		}
 		// タブ → 4スペース分
 		if (cp == '\t') {
 			const CachedGlyph* spaceGlyph = cache->GetGlyph(' ');
 			if (spaceGlyph) {
-				cursorX += spaceGlyph->metrics.advance * scale * 4.0f;
+				cursorX += spaceGlyph->metrics.advance * internalScale * 4.0f;
 			}
 			continue;
 		}
@@ -2547,10 +2557,11 @@ void Renderer::DrawString(const std::string& text, float x, float y, float scale
 
 		if (glyph->hasBitmap) {
 			// Quadの位置を計算 (ピクセル座標)
-			float xPos = cursorX + glyph->metrics.bearingX * scale;
-			float yPos = cursorY + (scaledAscent - glyph->metrics.bearingY * scale);
-			float w = glyph->metrics.width * scale;
-			float h = glyph->metrics.height * scale;
+			// ★ サブピクセル描画による滲みを防ぐため、整数座標に丸める
+			float xPos = std::round(cursorX + glyph->metrics.bearingX * internalScale);
+			float yPos = std::round(cursorY + (scaledAscent - glyph->metrics.bearingY * internalScale));
+			float w = std::round(glyph->metrics.width * internalScale);
+			float h = std::round(glyph->metrics.height * internalScale);
 
 			// ピクセル座標 → NDC
 			auto toNdcX = [W](float px) { return (px / W) * 2.0f - 1.0f; };
@@ -2577,7 +2588,7 @@ void Renderer::DrawString(const std::string& text, float x, float y, float scale
 			vertices.push_back(v5);
 		}
 
-		cursorX += glyph->metrics.advance * scale;
+		cursorX += glyph->metrics.advance * internalScale;
 	}
 }
 
@@ -2652,36 +2663,45 @@ void Renderer::FlushText() {
 }
 
 float Renderer::MeasureTextWidth(const std::string& text, float scale, const std::string& fontPath) {
+	float actualFontSize = std::round(scale * 64.0f);
+	if (actualFontSize <= 0.0f) return 0.0f;
+	std::string cacheKey = fontPath + "_" + std::to_string(static_cast<int>(actualFontSize));
+
 	// フォントが未ロードなら遅延初期化
-	if (!glyphCaches_.count(fontPath)) {
-		if (!InitTextSystem(fontPath, 64.0f)) return 0.0f;
+	if (!glyphCaches_.count(cacheKey)) {
+		if (!InitTextSystem(fontPath, actualFontSize, cacheKey)) return 0.0f;
 	}
-	auto it = glyphCaches_.find(fontPath);
+	auto it = glyphCaches_.find(cacheKey);
 	if (it == glyphCaches_.end() || !it->second || !it->second->IsInitialized()) return 0.0f;
 	auto& cache = it->second;
 
 	auto codepoints = Utf8ToCodepoints(text);
 	float width = 0.0f;
+	float internalScale = 1.0f;
 
 	for (uint32_t cp : codepoints) {
 		if (cp == '\n') break;
 		if (cp == '\t') {
 			const CachedGlyph* spaceGlyph = cache->GetGlyph(' ');
-			if (spaceGlyph) width += spaceGlyph->metrics.advance * scale * 4.0f;
+			if (spaceGlyph) width += spaceGlyph->metrics.advance * internalScale * 4.0f;
 			continue;
 		}
 		const CachedGlyph* glyph = cache->GetGlyph(cp);
 		if (glyph) {
-			width += glyph->metrics.advance * scale;
+			width += glyph->metrics.advance * internalScale;
 		}
 	}
 	return width;
 }
 
 float Renderer::GetTextLineHeight(float scale, const std::string& fontPath) const {
-	auto it = glyphCaches_.find(fontPath);
-	if (it == glyphCaches_.end() || !it->second || !it->second->IsInitialized()) return 0.0f;
-	return it->second->GetLineHeight() * scale;
+	float actualFontSize = std::round(scale * 64.0f);
+	if (actualFontSize <= 0.0f) return 0.0f;
+	std::string cacheKey = fontPath + "_" + std::to_string(static_cast<int>(actualFontSize));
+
+	auto it = glyphCaches_.find(cacheKey);
+	if (it == glyphCaches_.end() || !it->second || !it->second->IsInitialized()) return actualFontSize;
+	return it->second->GetLineHeight() * 1.0f;
 }
 
 // ★追加: 3Dライン描画（蓄積API）

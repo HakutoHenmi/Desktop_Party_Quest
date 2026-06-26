@@ -15,6 +15,7 @@
 // ★追加: 時間計測用
 #include <chrono>
 #include <thread>
+#include <functional>
 
 extern std::string g_CharInputBuffer;
 extern std::string g_ImeCompositionString; // ★追加: IME変換中の文字列
@@ -61,6 +62,21 @@ public:
 	HWND GetHwnd() const { return hwnd_; }
 	void SetSourceSize(uint32_t w, uint32_t h) { if (swap_) swap_->SetSourceSize(w, h); }
 
+	static HWND GetHWND() { return s_hwnd; }
+	static void SetHWND(HWND h) { s_hwnd = h; }
+
+	// アクティブウィンドウかどうかの判定用
+	static bool IsActiveWindow() { return s_isActiveWindow; }
+    
+	// 現在のOSワークエリア取得（タスクバーを除いた有効領域）
+	static RECT GetWorkArea();
+
+	// AppBarとして確保した矩形領域を正確に取得する
+	static RECT GetAppBarRect();
+
+	// ★追加: AppBarとして領域を確保する（0: なし, 1: 下, 2: 右）
+	static void SetAppBarMode(int mode);
+
 private:
 	bool InitWindow_(HINSTANCE hInst, int cmdShow, HWND& outHwnd);
 	bool InitDX_();
@@ -68,9 +84,14 @@ private:
 	bool CreateRTVDSV_();
 	bool CreateCommand_();
 	bool CreateFence_();
+	static void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime);
 
 private:
+	static bool s_isActiveWindow;
+	static HWND s_hwnd;
+
 	HWND hwnd_ = nullptr;
+	HWINEVENTHOOK winEventHook_ = nullptr; // ★追加: ウィンドウ切り替えイベント監視用
 	HINSTANCE hInst_ = nullptr;
 	WNDCLASSEX wc_{};
 

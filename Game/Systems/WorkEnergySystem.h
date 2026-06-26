@@ -15,11 +15,11 @@ public:
     WorkEnergySystem();
     ~WorkEnergySystem();
 
+    // Energy configuration
+    static constexpr float kMaxEnergy = 100.0f; // ★最大エネルギー値
+
     float GetEnergy() const { return currentEnergy_; }
     bool IsFocusAuraActive() const { return focusAuraActive_; }
-
-    // Callbacks for WinEventHook
-    static void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime);
 
 private:
     // Energy tracking
@@ -30,11 +30,10 @@ private:
     POINT lastMousePos_{};
     std::chrono::steady_clock::time_point lastActivityTime_;
 
-    // Window event hook
-    HWINEVENTHOOK hEventHook_ = nullptr;
-
-    // Singleton instance for the callback
-    static WorkEnergySystem* s_Instance_;
+    // Input tracking
+    int prevKeyStrokes_ = 0;
+    int prevMouseClicks_ = 0;
+    bool prevActiveWindow_ = true;
 
     void AddEnergy(float amount);
 };

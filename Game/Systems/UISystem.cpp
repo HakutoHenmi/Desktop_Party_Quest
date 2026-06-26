@@ -210,8 +210,17 @@ void UISystem::DrawTextW(entt::entity /*entity*/, entt::registry& /*registry*/, 
 	if (worldW > 0.0f) px += (worldW - tw) * 0.5f;
 	if (worldH > 0.0f) py += (worldH - th) * 0.5f;
 
-	Engine::Vector4 shadowColor = { 0.0f, 0.0f, 0.0f, text.color.w };
-	renderer->DrawString(text.text, px + 2.0f, py + 2.0f, fontScale, shadowColor, text.fontPath);
+	// ★追加: サブピクセル描画による文字の滲みを防ぐため、座標を整数に丸める
+	px = std::round(px);
+	py = std::round(py);
+
+	// 黒や暗い文字には影を落とさず、明るい文字にだけ影を落とす
+	float brightness = text.color.x * 0.299f + text.color.y * 0.587f + text.color.z * 0.114f;
+	if (brightness > 0.5f) {
+		float shadowOffset = std::max(1.0f, std::round(text.fontSize * 0.05f));
+		Engine::Vector4 shadowColor = { 0.0f, 0.0f, 0.0f, text.color.w * 0.6f };
+		renderer->DrawString(text.text, px + shadowOffset, py + shadowOffset, fontScale, shadowColor, text.fontPath);
+	}
 
 	Engine::Vector4 colorVec = { text.color.x, text.color.y, text.color.z, text.color.w };
 	renderer->DrawString(text.text, px, py, fontScale, colorVec, text.fontPath);

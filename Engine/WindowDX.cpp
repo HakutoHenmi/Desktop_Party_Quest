@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <shellapi.h>
 #include <string>
+#include <windowsx.h>
 
 #include <dwmapi.h>
 #pragma comment(lib, "dwmapi.lib")
@@ -29,6 +30,102 @@ namespace Engine {
 
 // 静的変数の実体定義（初期値は "Resources"）
 std::string WindowDX::s_DropDirectory = "Resources";
+bool WindowDX::s_isActiveWindow = true;
+HWND WindowDX::s_hwnd = nullptr;
+
+static HWND s_dummyAppBar = NULL;
+static int s_appBarMode = 0;
+static RECT s_appBarRect = {0,0,0,0};
+
+LRESULT CALLBACK DummyAppBarProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    return DefWindowProc(hwnd, msg, wp, lp);
+}
+
+void WindowDX::SetAppBarMode(int mode) {
+    if (s_appBarMode == mode) return;
+
+    // 初回のみダミーウィンドウを作成し、以降は使い回す
+    if (!s_dummyAppBar) {
+        WNDCLASSEXA wcex = { sizeof(WNDCLASSEXA) };
+        wcex.lpfnWndProc = DummyAppBarProc;
+        wcex.hInstance = GetModuleHandle(NULL);
+        wcex.lpszClassName = "DPQ_DummyAppBar";
+        RegisterClassExA(&wcex);
+        
+        s_dummyAppBar = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TRANSPARENT, 
+            "DPQ_DummyAppBar", "", WS_POPUP, 0, 0, 0, 0, NULL, NULL, GetModuleHandle(NULL), NULL);
+        SetLayeredWindowAttributes(s_dummyAppBar, 0, 0, LWA_ALPHA);
+    }
+
+    APPBARDATA abd = { sizeof(APPBARDATA) };
+    abd.hWnd = s_dummyAppBar;
+    abd.uCallbackMessage = WM_USER + 100;
+
+    // すでにAppBarとして登録されていれば解除
+    if (s_appBarMode != 0) {
+        SHAppBarMessage(ABM_REMOVE, &abd);
+        s_appBarRect = {0,0,0,0};
+    }
+
+    s_appBarMode = mode;
+
+    if (mode != 0) {
+
+        ShowWindow(s_dummyAppBar, SW_SHOW);
+        SHAppBarMessage(ABM_NEW, &abd);
+
+        if (mode == 1) { // Bottom
+            abd.uEdge = ABE_BOTTOM;
+            abd.rc.left = 0;
+            abd.rc.right = GetSystemMetrics(SM_CXSCREEN);
+            abd.rc.bottom = GetSystemMetrics(SM_CYSCREEN);
+            abd.rc.top = abd.rc.bottom - 48;
+        } else if (mode == 2) { // Right
+            abd.uEdge = ABE_RIGHT;
+            abd.rc.top = 0;
+            abd.rc.bottom = GetSystemMetrics(SM_CYSCREEN);
+            abd.rc.right = GetSystemMetrics(SM_CXSCREEN);
+            abd.rc.left = abd.rc.right - 64;
+        }
+
+        SHAppBarMessage(ABM_QUERYPOS, &abd);
+        if (mode == 1) abd.rc.top = abd.rc.bottom - 48;
+        if (mode == 2) abd.rc.left = abd.rc.right - 64;
+        SHAppBarMessage(ABM_SETPOS, &abd);
+        
+        s_appBarRect = abd.rc; // 実際に確保された座標を記憶
+        SetWindowPos(s_dummyAppBar, HWND_TOPMOST, abd.rc.left, abd.rc.top, abd.rc.right - abd.rc.left, abd.rc.bottom - abd.rc.top, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    } else {
+        ShowWindow(s_dummyAppBar, SW_HIDE);
+    }
+}
+
+RECT WindowDX::GetAppBarRect() {
+    return s_appBarRect;
+}
+
+
+void CALLBACK WindowDX::WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime) {
+	(void)hWinEventHook;
+	(void)idObject;
+	(void)idChild;
+	(void)dwEventThread;
+	(void)dwmsEventTime;
+
+	if (event == EVENT_SYSTEM_FOREGROUND) {
+		if (hwnd == s_hwnd) {
+			s_isActiveWindow = true;
+		} else {
+			s_isActiveWindow = false;
+		}
+	}
+}
+
+RECT WindowDX::GetWorkArea() {
+	RECT workArea;
+	SystemParametersInfo(SPI_GETWORKAREA, 0, &workArea, 0);
+	return workArea;
+}
 
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
 	if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wp, lp)) {
@@ -212,6 +309,11 @@ bool WindowDX::Initialize(HINSTANCE hInst, int cmdShow, HWND& outHwnd) {
 			SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
 	}
 
+	// ★追加: スワップチェーンの等倍描画（DWMによる引き伸ばしと文字の滲みを防止）
+	RECT rcClient;
+	GetClientRect(hwnd_, &rcClient);
+	SetSourceSize(rcClient.right - rcClient.left, rcClient.bottom - rcClient.top);
+
 	return true;
 }
 
@@ -275,7 +377,15 @@ void WindowDX::WaitGPU() {
 
 
 void WindowDX::Shutdown() {
+	// ★追加: アプリ終了時に確実にAppBarの領域をOSに返還する
+	SetAppBarMode(0);
+
 	WaitGPU();
+
+	if (winEventHook_) {
+		UnhookWinEvent(winEventHook_);
+		winEventHook_ = nullptr;
+	}
 
 	if (fev_) {
 		CloseHandle(fev_);
@@ -319,8 +429,8 @@ bool WindowDX::InitWindow_(HINSTANCE hInst, int cmdShow, HWND& outHwnd) {
 	RegisterClassEx(&wc_);
 
 	DWORD style = WS_POPUP; // 完全ボーダレス
-	// ★DirectCompositionを使うため、WS_EX_LAYEREDは外し、WS_EX_NOREDIRECTIONBITMAPを使います。
-	DWORD exStyle = WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
+	// ★DirectCompositionとWS_EX_LAYEREDを併用することで、HTTRANSPARENTが別プロセス(背景)にも貫通するようになります。
+	DWORD exStyle = WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED;
 
 	RECT rc = {0, 0, (LONG)kW, (LONG)kH};
 	AdjustWindowRectEx(&rc, style, FALSE, exStyle);
@@ -339,12 +449,18 @@ bool WindowDX::InitWindow_(HINSTANCE hInst, int cmdShow, HWND& outHwnd) {
 	if (!hwnd_)
 		return false;
 
+	// ★追加: WS_EX_LAYEREDのヒットテストを有効化するため、ダミーのアルファ値を設定する
+	SetLayeredWindowAttributes(hwnd_, 0, 255, LWA_ALPHA);
+
 	// DWMのフレーム拡張により、クライアント領域全体を透過として扱うように指示する
 	MARGINS margins = { -1, -1, -1, -1 };
 	DwmExtendFrameIntoClientArea(hwnd_, &margins);
 
 	// ★FSO (Full Screen Optimization) による強制不透明化を避けるため、意図的に1px小さくする
 	SetWindowPos(hwnd_, nullptr, 0, 0, wWidth - 1, wHeight, SWP_NOMOVE | SWP_NOZORDER);
+
+	s_hwnd = hwnd_;
+	winEventHook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
 
 	DragAcceptFiles(hwnd_, TRUE);
 
