@@ -332,7 +332,7 @@ public:
 	void FlushText(); // テキストの描画実行
 
 	// テキストシステムの初期化 (フォントファイルの読み込み)
-	bool InitTextSystem(const std::string& fontPath, float pixelHeight = 48.0f);
+	bool InitTextSystem(const std::string& fontPath, float pixelHeight = 48.0f, const std::string& cacheKey = "");
 
 	// テキスト描画の幅を事前計算 (レイアウト用)
 	float MeasureTextWidth(const std::string& text, float scale = 1.0f, const std::string& fontPath = "Resources/Textures/fonts/Huninn/Huninn-Regular.ttf");

@@ -60,6 +60,15 @@ private:
     float dt_ = 1.0f / 60.0f;
     float totalTime_ = 0.0f;
 
+    // ★追加: アプリケーションのモード
+    enum class AppMode {
+        Fullscreen,
+        TaskbarBottom,
+        TaskbarRight
+    };
+    AppMode appMode_ = AppMode::Fullscreen;
+    void SwitchAppMode(AppMode mode);
+
     std::vector<entt::entity> selectedEntities_;
     entt::entity selectedEntity_ = entt::null;
     bool isPlaying_ = false;
@@ -68,6 +77,31 @@ private:
 
     // Systems
     std::vector<std::unique_ptr<ISystem>> systems_;
+
+    // UI Tabs
+    enum class TabType { Command, Shop, Status };
+    TabType currentTab_ = TabType::Shop;
+
+    entt::entity tabCommandBtn_ = entt::null;
+    entt::entity tabShopBtn_ = entt::null;
+    entt::entity tabStatusBtn_ = entt::null;
+    entt::entity tabActiveLine_ = entt::null;
+
+    // ★追加: 格納モード切り替え用のUIエンティティ
+    entt::entity stowButton_ = entt::null;
+    entt::entity stowRightBtn_ = entt::null;
+    entt::entity bottomBarPanel_ = entt::null;
+    entt::entity bottomUnstowBtn_ = entt::null;
+    entt::entity bottomBarText_ = entt::null;
+    entt::entity rightBarPanel_ = entt::null;
+    entt::entity rightUnstowBtn_ = entt::null;
+    entt::entity rightBarText_ = entt::null;
+
+    std::vector<entt::entity> commandTabEntities_;
+    std::vector<entt::entity> shopTabEntities_;
+    std::vector<entt::entity> statusTabEntities_;
+
+    void SwitchTab(TabType newTab);
 };
 
 } // namespace Game

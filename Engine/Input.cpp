@@ -49,6 +49,10 @@ void Input::Initialize(HINSTANCE hInst, HWND hwnd) {
 	ZeroMemory(&prevMouseState_, sizeof(prevMouseState_));
 	mouseX_ = mouseY_ = wheel_ = 0.0f;
 	absMouseX_ = absMouseY_ = 0.0f;
+
+	totalGlobalKeyStrokes_ = 0;
+	totalGlobalMouseClicks_ = 0;
+	ZeroMemory(prevGlobalKeyState_, sizeof(prevGlobalKeyState_));
 }
 
 void Input::Update() {
@@ -91,6 +95,21 @@ void Input::Update() {
 
 	// ホイール量（上:+、下:-）
 	wheel_ = static_cast<float>(mouseState_.lZ) / WHEEL_DELTA;
+
+	// ★追加: グローバル入力の監視（SetWindowsHookExを使わない代替案）
+	// GetAsyncKeyStateを使うことで、別アプリ操作中のキーやクリックも検知できる。
+	// マウスボタンとキーボードを分けてカウントする
+	for (int i = 1; i < 256; ++i) {
+		bool isDown = (GetAsyncKeyState(i) & 0x8000) != 0;
+		if (isDown && !prevGlobalKeyState_[i]) {
+			if (i == VK_LBUTTON || i == VK_RBUTTON || i == VK_MBUTTON || i == VK_XBUTTON1 || i == VK_XBUTTON2) {
+				totalGlobalMouseClicks_++;
+			} else {
+				totalGlobalKeyStrokes_++;
+			}
+		}
+		prevGlobalKeyState_[i] = isDown;
+	}
 }
 
 void Input::Shutdown() {

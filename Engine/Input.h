@@ -25,6 +25,10 @@ public:
 	float GetMouseDeltaY() const { return mouseY_; }
 	float GetMouseWheelDelta() const { return wheel_; }
 
+	// ★追加: 作業エネルギー検知用（グローバル監視、フック非依存）
+	int GetTotalGlobalKeyStrokes() const { return totalGlobalKeyStrokes_; }
+	int GetTotalGlobalMouseClicks() const { return totalGlobalMouseClicks_; }
+
 	// ★追加: 絶対座標とボタン状態
 	void GetMousePos(float& x, float& y) const { x = absMouseX_; y = absMouseY_; }
 	bool IsMouseDown(int button) const { return (mouseState_.rgbButtons[button] & 0x80) != 0; }
@@ -50,6 +54,11 @@ private:
 	float absMouseY_ = 0.0f; // ★追加
 	float wheel_ = 0.0f;
 	HWND hwnd_ = nullptr; // ★追加
+
+	// ★追加: 作業エネルギー検知用（グローバル監視）
+	int totalGlobalKeyStrokes_ = 0;
+	int totalGlobalMouseClicks_ = 0;
+	bool prevGlobalKeyState_[256]{};
 
 	static Input* instance_;
 };
