@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "../ObjectTypes.h"
 #include "../../Engine/Camera.h"
 #include "../../Engine/Renderer.h"
@@ -22,6 +22,7 @@ struct GameContext {
 
 	// ★追加: 座標系補正用 (エディターGameビュー等での相対座標)
 	bool useOverrideMouse = false;
+	bool isStowed = false; // ★追加: 格納モードかどうか
 	float overrideMouseX = 0.0f;
 	float overrideMouseY = 0.0f;
 	DirectX::XMFLOAT2 viewportOffset = { 0, 0 };

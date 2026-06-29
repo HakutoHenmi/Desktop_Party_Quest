@@ -42,62 +42,7 @@ LRESULT CALLBACK DummyAppBarProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 void WindowDX::SetAppBarMode(int mode) {
-    if (s_appBarMode == mode) return;
-
-    // 初回のみダミーウィンドウを作成し、以降は使い回す
-    if (!s_dummyAppBar) {
-        WNDCLASSEXA wcex = { sizeof(WNDCLASSEXA) };
-        wcex.lpfnWndProc = DummyAppBarProc;
-        wcex.hInstance = GetModuleHandle(NULL);
-        wcex.lpszClassName = "DPQ_DummyAppBar";
-        RegisterClassExA(&wcex);
-        
-        s_dummyAppBar = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TRANSPARENT, 
-            "DPQ_DummyAppBar", "", WS_POPUP, 0, 0, 0, 0, NULL, NULL, GetModuleHandle(NULL), NULL);
-        SetLayeredWindowAttributes(s_dummyAppBar, 0, 0, LWA_ALPHA);
-    }
-
-    APPBARDATA abd = { sizeof(APPBARDATA) };
-    abd.hWnd = s_dummyAppBar;
-    abd.uCallbackMessage = WM_USER + 100;
-
-    // すでにAppBarとして登録されていれば解除
-    if (s_appBarMode != 0) {
-        SHAppBarMessage(ABM_REMOVE, &abd);
-        s_appBarRect = {0,0,0,0};
-    }
-
     s_appBarMode = mode;
-
-    if (mode != 0) {
-
-        ShowWindow(s_dummyAppBar, SW_SHOW);
-        SHAppBarMessage(ABM_NEW, &abd);
-
-        if (mode == 1) { // Bottom
-            abd.uEdge = ABE_BOTTOM;
-            abd.rc.left = 0;
-            abd.rc.right = GetSystemMetrics(SM_CXSCREEN);
-            abd.rc.bottom = GetSystemMetrics(SM_CYSCREEN);
-            abd.rc.top = abd.rc.bottom - 48;
-        } else if (mode == 2) { // Right
-            abd.uEdge = ABE_RIGHT;
-            abd.rc.top = 0;
-            abd.rc.bottom = GetSystemMetrics(SM_CYSCREEN);
-            abd.rc.right = GetSystemMetrics(SM_CXSCREEN);
-            abd.rc.left = abd.rc.right - 64;
-        }
-
-        SHAppBarMessage(ABM_QUERYPOS, &abd);
-        if (mode == 1) abd.rc.top = abd.rc.bottom - 48;
-        if (mode == 2) abd.rc.left = abd.rc.right - 64;
-        SHAppBarMessage(ABM_SETPOS, &abd);
-        
-        s_appBarRect = abd.rc; // 実際に確保された座標を記憶
-        SetWindowPos(s_dummyAppBar, HWND_TOPMOST, abd.rc.left, abd.rc.top, abd.rc.right - abd.rc.left, abd.rc.bottom - abd.rc.top, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    } else {
-        ShowWindow(s_dummyAppBar, SW_HIDE);
-    }
 }
 
 RECT WindowDX::GetAppBarRect() {
@@ -299,13 +244,13 @@ bool WindowDX::Initialize(HINSTANCE hInst, int cmdShow, HWND& outHwnd) {
 	// 初回時刻を記録
 	lastFrameTime_ = std::chrono::steady_clock::now();
 
-	// 起動時から完全に隙間なくフルスクリーン（ボーダレス）にする
+	// 起動時からフルスクリーンにするが、タスクバーが隠れる(Full Screen Heuristic)のを防ぐため高さと幅を1px小さくする
 	MONITORINFO mi = { sizeof(mi) };
 	if (GetMonitorInfo(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTOPRIMARY), &mi)) {
 		SetWindowPos(hwnd_, HWND_TOP,
 			mi.rcMonitor.left, mi.rcMonitor.top,
-			mi.rcMonitor.right - mi.rcMonitor.left,
-			mi.rcMonitor.bottom - mi.rcMonitor.top,
+			mi.rcMonitor.right - mi.rcMonitor.left - 1,
+			mi.rcMonitor.bottom - mi.rcMonitor.top - 1,
 			SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
 	}
 

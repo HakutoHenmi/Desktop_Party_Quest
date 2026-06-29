@@ -34,6 +34,7 @@ private:
     int prevKeyStrokes_ = 0;
     int prevMouseClicks_ = 0;
     bool prevActiveWindow_ = true;
+    std::chrono::steady_clock::time_point lastInputTime_;
 
     void AddEnergy(float amount);
 };

@@ -4,6 +4,10 @@
 #include "../../Engine/Renderer.h"
 #include "../../Engine/SceneManager.h"
 #include "../../Engine/WindowDX.h"
+#include "../../Engine/PathUtils.h"
+#include <windows.h>
+#include <commdlg.h>
+#pragma comment(lib, "comdlg32.lib")
 
 #include <cmath>
 
@@ -40,6 +44,7 @@ void MainScene::Initialize(Engine::WindowDX* dx, const Engine::SceneParameters& 
     context_.renderer = renderer_;
     context_.input = Engine::Input::GetInstance(); // ★追加: これがないとUIがクリックに反応しない
     context_.scene = this;
+    context_.isPlaying = true; // ★追加: これがないとAI等のゲーム内Systemが動かない
 
     // Initialize Systems
     auto uiSystem = std::make_unique<UISystem>();
@@ -50,45 +55,39 @@ void MainScene::Initialize(Engine::WindowDX* dx, const Engine::SceneParameters& 
     workEnergySystem->Reset(registry_);
     systems_.push_back(std::move(workEnergySystem));
 
-    // ★追加: 画面に表示するオブジェクトが何もない状態だったため、床とテストキャラクター（スライム等）を生成する
-    {
-/*
-        // 床
-        auto floor = registry_.create();
-        registry_.emplace<NameComponent>(floor, "Floor");
-        auto& tFloor = registry_.emplace<TransformComponent>(floor);
-        tFloor.translate = {0, -1.0f, 0};
-        tFloor.scale = {20.0f, 1.0f, 20.0f};
-        auto& mrFloor = registry_.emplace<MeshRendererComponent>(floor);
-        mrFloor.modelPath = "Resources/Models/plane.obj"; // 実在するモデル
-        mrFloor.color = {0.3f, 0.5f, 0.3f, 1.0f};
-        mrFloor.shaderName = "Default";
+    auto combatSystem = std::make_unique<DesktopCombatSystem>();
+    combatSys_ = combatSystem.get();
+    combatSystem->Reset(registry_);
+    systems_.push_back(std::move(combatSystem));
 
-        // キャラクター（スライム代わり）
-        auto player = registry_.create();
-        registry_.emplace<NameComponent>(player, "Player");
-        auto& tPlayer = registry_.emplace<TransformComponent>(player);
-        tPlayer.translate = {0, 1.0f, 0};
-        tPlayer.scale = {1.0f, 1.0f, 1.0f};
-        auto& mrPlayer = registry_.emplace<MeshRendererComponent>(player);
-        mrPlayer.modelPath = "Resources/Models/plane.obj"; // 実在するモデル(立ててキャラ代わりにする)
-        tPlayer.rotate = {DirectX::XM_PIDIV2, 0, 0};
-        mrPlayer.color = {0.2f, 0.6f, 1.0f, 1.0f};
-        mrPlayer.shaderName = "Default";
-*/
-        
-        // プレイヤーとして動かせるようにタグと入力コンポーネントを追加
-/*
-        registry_.emplace<TagComponent>(player, TagType::Player);
-        registry_.emplace<PlayerInputComponent>(player);
-        registry_.emplace<CharacterMovementComponent>(player);
-        registry_.emplace<RigidbodyComponent>(player);
-        
-        // カメラがプレイヤーを追従するようにする
-        auto& camTarget = registry_.emplace<CameraTargetComponent>(player);
-        camTarget.distance = 15.0f;
-        camTarget.height = 8.0f;
-*/
+    auto spriteAISystem = std::make_unique<SpriteCharacterAISystem>();
+    systems_.push_back(std::move(spriteAISystem));
+
+    // ★追加: 画面に表示するオブジェクトが何もない状態だったため、生成したドット絵キャラクターを配置
+    {
+        auto createCharacter = [&](const std::string& name, const std::string& texPath, float startX, float startY) {
+            auto ent = registry_.create();
+            registry_.emplace<NameComponent>(ent, name);
+            auto& t = registry_.emplace<RectTransformComponent>(ent);
+            t.pos = {startX, startY};
+            t.size = {128, 128}; 
+            t.anchor = {0.0f, 0.0f}; t.pivot = {0.5f, 0.5f};
+            auto& img = registry_.emplace<UIImageComponent>(ent);
+            img.texturePath = texPath;
+            if (renderer_) {
+                img.textureHandle = renderer_->LoadTexture2D(img.texturePath, false); // ★ sRGB = false (ガンマ補正による暗色化を防ぐ)
+            }
+            img.color = {1, 1, 1, 1};
+            img.layer = -5; // デスクトップの奥側
+            registry_.emplace<SpriteCharacterAIComponent>(ent);
+            return ent;
+        };
+
+        createCharacter("Char_Tank", "Resources/Textures/Characters/char_tank.png", 300, 600);
+        createCharacter("Char_Sniper", "Resources/Textures/Characters/char_sniper.png", 600, 500);
+        createCharacter("Char_Scout", "Resources/Textures/Characters/char_scout.png", 900, 700);
+        createCharacter("Char_Engineer", "Resources/Textures/Characters/char_engineer.png", 1200, 450);
+        createCharacter("Char_Healer", "Resources/Textures/Characters/char_healer.png", 500, 550);
     }
 
     {
@@ -154,19 +153,14 @@ void MainScene::Initialize(Engine::WindowDX* dx, const Engine::SceneParameters& 
         createText("Title", "司令室", 1320, 60, 32.0f, {0.1f, 0.1f, 0.1f, 1.0f});
         createText("Gold", "所持: 1250 G", 1520, 70, 20.0f, {0.7f, 0.5f, 0.0f, 1.0f});
         
-        // ★追加: 格納ボタン
-        stowButton_ = createButton("StowBtn", "⬇下へ格納", 1680, 65, 100, 30, {0.9f, 0.9f, 0.9f, 1.0f}, 16.0f);
-        stowRightBtn_ = createButton("StowRightBtn", "➡右へ格納", 1790, 65, 100, 30, {0.9f, 0.9f, 0.9f, 1.0f}, 16.0f);
+        // ★追加: 格納ボタン (オービタル格納)
+        stowButton_ = createButton("StowBtn", "⬇ オービタル格納", 1680, 65, 210, 30, {0.9f, 0.9f, 0.9f, 1.0f}, 16.0f);
 
-        // ★追加: タスクバー（下部）格納モード用UI（初期は非表示）
-        bottomBarPanel_ = createPanel("BottomBar", 0, 1032, 1920, 48, {0.1f, 0.1f, 0.15f, 0.95f}, 0);
-        bottomBarText_ = createText("BottomText", "Desktop Party Quest  |  作業エネルギー収集モード...", 20, 1045, 16.0f, {1.0f, 1.0f, 1.0f, 1.0f});
-        bottomUnstowBtn_ = createButton("BottomUnstow", "復帰 ⬆", 1800, 1040, 100, 32, {0.3f, 0.5f, 0.9f, 1.0f}, 16.0f, {1.0f, 1.0f, 1.0f, 1.0f});
-
-        // ★追加: タスクバー（右部）格納モード用UI（初期は非表示）
-        rightBarPanel_ = createPanel("RightBar", 1856, 0, 64, 1080, {0.1f, 0.1f, 0.15f, 0.95f}, 0);
-        rightBarText_ = createText("RightText", "D\nP\nQ", 1878, 80, 20.0f, {1.0f, 1.0f, 1.0f, 1.0f});
-        rightUnstowBtn_ = createButton("RightUnstow", "復帰\n⬅", 1860, 20, 56, 40, {0.3f, 0.5f, 0.9f, 1.0f}, 14.0f, {1.0f, 1.0f, 1.0f, 1.0f});
+        // ★追加: オービタル格納時の復帰ボタン（画面右下に配置）
+        RECT wa = Engine::WindowDX::GetWorkArea();
+        float bottomY = wa.bottom - 48.0f;
+        float rightX = wa.right - 120.0f;
+        unstowBtn_ = createButton("BottomUnstow", "司令室 復帰 ⬆", rightX, bottomY, 110, 32, {0.3f, 0.5f, 0.9f, 1.0f}, 14.0f, {1.0f, 1.0f, 1.0f, 1.0f});
 
         // 初期モード設定
         SwitchAppMode(AppMode::Fullscreen);
@@ -217,11 +211,11 @@ void MainScene::Initialize(Engine::WindowDX* dx, const Engine::SceneParameters& 
         auto createStatusRow = [&](int idx, const std::string& name, const std::string& lv, const std::string& hp, const std::string& atk, const std::string& spd) {
             float y = 475.0f + idx * 45.0f;
             statusTabEntities_.push_back(createPanel("RowBG", 1320, y, 530, 40, (idx % 2 == 0) ? DirectX::XMFLOAT4{1,1,1,1} : DirectX::XMFLOAT4{0.98f,0.98f,0.98f,1}, 0));
-            statusTabEntities_.push_back(createText("R_Name", name, 1340, y + 10, 16.0f, {0.2f,0.2f,0.2f,1}));
-            statusTabEntities_.push_back(createText("R_Lv", lv, 1520, y + 10, 16.0f, {0.2f,0.2f,0.2f,1}));
-            statusTabEntities_.push_back(createText("R_HP", hp, 1580, y + 10, 16.0f, {0.2f,0.6f,0.2f,1}));
-            statusTabEntities_.push_back(createText("R_ATK", atk, 1680, y + 10, 16.0f, {0.8f,0.2f,0.2f,1}));
-            statusTabEntities_.push_back(createText("R_SPD", spd, 1760, y + 10, 16.0f, {0.2f,0.2f,0.8f,1}));
+            statusTabEntities_.push_back(createText("R_Name" + std::to_string(idx), name, 1340, y + 10, 16.0f, {0.2f,0.2f,0.2f,1}));
+            statusTabEntities_.push_back(createText("R_Lv" + std::to_string(idx), lv, 1520, y + 10, 16.0f, {0.2f,0.2f,0.2f,1}));
+            statusTabEntities_.push_back(createText("R_HP" + std::to_string(idx), hp, 1580, y + 10, 16.0f, {0.2f,0.6f,0.2f,1}));
+            statusTabEntities_.push_back(createText("R_ATK" + std::to_string(idx), atk, 1680, y + 10, 16.0f, {0.8f,0.2f,0.2f,1}));
+            statusTabEntities_.push_back(createText("R_SPD" + std::to_string(idx), spd, 1760, y + 10, 16.0f, {0.2f,0.2f,0.8f,1}));
         };
         createStatusRow(0, "タンク", "1", "100/100", "10", "2.0");
         createStatusRow(1, "スナイパー", "1", "60/60", "25", "2.2");
@@ -230,7 +224,7 @@ void MainScene::Initialize(Engine::WindowDX* dx, const Engine::SceneParameters& 
 
         // --- コマンドタブ ---
         commandTabEntities_.push_back(createPanel("CommandBG", 1320, 180, 530, 160, {0.95f, 0.96f, 0.98f, 1.0f}, 0));
-        commandTabEntities_.push_back(createText("CommandHeaderG", "獲得ゴールド:", 1340, 200, 16.0f, {0.4f, 0.4f, 0.4f, 1.0f}));
+        commandTabEntities_.push_back(createText("CommandHeaderG", "所持ゴールド:", 1340, 200, 16.0f, {0.4f, 0.4f, 0.4f, 1.0f}));
         commandTabEntities_.push_back(createText("CommandHeaderGV", "300 G", 1460, 198, 20.0f, {0.8f, 0.6f, 0.0f, 1.0f}));
         commandTabEntities_.push_back(createText("CommandHeaderE", "作業エネルギー:", 1620, 200, 16.0f, {0.4f, 0.4f, 0.4f, 1.0f}));
         commandTabEntities_.push_back(createText("CommandHeaderEV", "9/30", 1760, 200, 16.0f, {0.2f, 0.5f, 0.8f, 1.0f}));
@@ -242,13 +236,37 @@ void MainScene::Initialize(Engine::WindowDX* dx, const Engine::SceneParameters& 
         commandTabEntities_.push_back(createButton("ActionRecover", "回収", 1510, 280, 150, 45, {0.6f, 0.9f, 0.6f, 1.0f}, 20.0f, {1.0f, 1.0f, 1.0f, 1.0f}));
         commandTabEntities_.push_back(createButton("ActionFormat", "陣形", 1680, 280, 150, 45, {0.2f, 0.3f, 0.9f, 1.0f}, 20.0f, {1.0f, 1.0f, 1.0f, 1.0f}));
         
+        // チャンバーの枠線（はっきり見えるように手前のレイヤーに描画）
+        DirectX::XMFLOAT4 borderColor = {0.2f, 0.7f, 1.0f, 1.0f}; // 蛍光ブルー風
+        commandTabEntities_.push_back(createPanel("ChamberBorderTop",    1316, 346, 538, 4, borderColor, 2));
+        commandTabEntities_.push_back(createPanel("ChamberBorderBottom", 1316, 550, 538, 4, borderColor, 2));
+        commandTabEntities_.push_back(createPanel("ChamberBorderLeft",   1316, 350, 4, 200, borderColor, 2));
+        commandTabEntities_.push_back(createPanel("ChamberBorderRight",  1850, 350, 4, 200, borderColor, 2));
         commandTabEntities_.push_back(createPanel("ChamberBG", 1320, 350, 530, 200, {0.05f, 0.05f, 0.1f, 1.0f}, 0));
-        commandTabEntities_.push_back(createText("ChamberText", "エネルギーチャンバー (準備中)", 1460, 440, 16.0f, {0.3f, 0.3f, 0.4f, 1.0f}));
+        
+        // エネルギーコア (フィーバーシステム)
+        coreEntity_ = createPanel("EnergyCore", 1320 + 265, 350 + 100, 64, 48, {1.0f, 1.0f, 1.0f, 1.0f}, 1);
+        auto& coreImg = registry_.get<UIImageComponent>(coreEntity_);
+        coreImg.texturePath = "Resources/Textures/white1x1.png"; // 四角
+        coreImg.color = {1.0f, 0.3f, 0.5f, 1.0f};
+        if (renderer_) coreImg.textureHandle = renderer_->LoadTexture2D(coreImg.texturePath);
+        
+        commandTabEntities_.push_back(coreEntity_);
         
         commandTabEntities_.push_back(createText("StatusInfo", "キャラ画像変更 (UGC)", 1320, 570, 16.0f, {0.2f, 0.2f, 0.2f, 1.0f}));
         commandTabEntities_.push_back(createButton("UGCSelectChar", "タンク", 1320, 600, 150, 35, {1.0f, 1.0f, 1.0f, 1.0f}, 16.0f, {0.0f, 0.0f, 0.0f, 1.0f}));
         commandTabEntities_.push_back(createButton("UGCFile", "ファイルを選択", 1490, 600, 120, 35, {0.9f, 0.9f, 0.9f, 1.0f}, 14.0f, {0.2f, 0.2f, 0.2f, 1.0f}));
         commandTabEntities_.push_back(createText("UGCNothing", "選択されていません", 1630, 610, 14.0f, {0.5f, 0.5f, 0.5f, 1.0f}));
+        
+        // ログ領域
+        commandTabEntities_.push_back(createPanel("LogBG", 1320, 650, 530, 250, {0.95f, 0.95f, 0.95f, 1.0f}, 0));
+        for (int i = 0; i < 9; i++) {
+            auto logTxt = createText("LogText" + std::to_string(i), "", 1330.0f, 660.0f + static_cast<float>(i) * 25.0f, 14.0f, {0.2f, 0.2f, 0.2f, 1.0f});
+            commandTabEntities_.push_back(logTxt);
+            logTextEntities_.push_back(logTxt);
+        }
+        AddLog("システム起動...");
+        AddLog("司令室への接続完了。");
         
         // 初期タブ設定
         SwitchTab(TabType::Command);
@@ -263,6 +281,7 @@ void MainScene::Update() {
     if (dt_ > 0.1f)
         dt_ = 1.0f / 60.0f;
     totalTime_ += dt_;
+    context_.dt = dt_;
 
     if (dx_ && dx_->GetHwnd()) {
         HWND hwnd = dx_->GetHwnd();
@@ -308,6 +327,7 @@ void MainScene::Update() {
     }
 
     // Update Systems
+    context_.isStowed = IsStowed();
     for (auto& sys : systems_) {
         sys->Update(registry_, context_);
     }
@@ -325,67 +345,326 @@ void MainScene::Update() {
     checkBtnClick(tabShopBtn_, [&](){ SwitchTab(TabType::Shop); });
     checkBtnClick(tabStatusBtn_, [&](){ SwitchTab(TabType::Status); });
     
+    // AIモード変更ボタン
+    auto nameView = registry_.view<NameComponent>();
+    for (auto e : nameView) {
+        auto& n = nameView.get<NameComponent>(e);
+        if (n.name == "ActionAttack") {
+            checkBtnClick(e, [&](){ 
+                if (combatSys_) combatSys_->currentAiMode = PartyAIMode::Attack; 
+                AddLog("> 司令：パーティーを突撃モードに変更");
+            });
+        }
+        else if (n.name == "ActionRecover") {
+            checkBtnClick(e, [&](){ 
+                if (combatSys_) combatSys_->currentAiMode = PartyAIMode::Collect; 
+                AddLog("> 司令：パーティーを回収モードに変更");
+            });
+        }
+        else if (n.name == "ActionFormat") {
+            checkBtnClick(e, [&](){ 
+                if (combatSys_) combatSys_->currentAiMode = PartyAIMode::Formation; 
+                AddLog("> 司令：パーティーを陣形モードに変更");
+            });
+        }
+        else if (n.name == "Btn1" || n.name == "Btn2" || n.name == "Btn3" || n.name == "Btn4") {
+            int heroIdx = (n.name == "Btn1") ? 0 : (n.name == "Btn2") ? 1 : (n.name == "Btn3") ? 2 : 3;
+            std::string heroNames[] = {"タンク", "スナイパー", "スカウト", "エンジニア"};
+            checkBtnClick(e, [&, heroIdx, heroNames](){ 
+                if (combatSys_ && combatSys_->currentGold >= 100) {
+                    combatSys_->currentGold -= 100;
+                    combatSys_->heroLevels[heroIdx]++;
+                    AddLog("> " + heroNames[heroIdx] + "を強化しました！ (Lv." + std::to_string(combatSys_->heroLevels[heroIdx]) + ")");
+                } else {
+                    AddLog("ゴールドが足りません！");
+                }
+            });
+        }
+        else if (n.name == "RoomNormal") {
+            checkBtnClick(e, [&](){ 
+                if (combatSys_) {
+                    combatSys_->currentTheme = 0;
+                    AddLog("> 司令室を標準チャンバーに変更しました。"); 
+                }
+            });
+        }
+        else if (n.name == "RoomCyber") {
+            checkBtnClick(e, [&](){ 
+                if (combatSys_) {
+                    if (combatSys_->themeOwned[1]) {
+                        combatSys_->currentTheme = 1;
+                        AddLog("> 司令室をサイバー空間に変更しました！");
+                    } else if (combatSys_->currentGold >= 500) {
+                        combatSys_->currentGold -= 500;
+                        combatSys_->themeOwned[1] = true;
+                        combatSys_->currentTheme = 1;
+                        AddLog("> 司令室をサイバー空間に変更しました！");
+                    } else { AddLog("ゴールドが足りません！"); }
+                }
+            });
+        }
+        else if (n.name == "RoomAntique") {
+            checkBtnClick(e, [&](){ 
+                if (combatSys_) {
+                    if (combatSys_->themeOwned[2]) {
+                        combatSys_->currentTheme = 2;
+                        AddLog("> 司令室をアンティーク調に変更しました！");
+                    } else if (combatSys_->currentGold >= 1000) {
+                        combatSys_->currentGold -= 1000;
+                        combatSys_->themeOwned[2] = true;
+                        combatSys_->currentTheme = 2;
+                        AddLog("> 司令室をアンティーク調に変更しました！");
+                    } else { AddLog("ゴールドが足りません！"); }
+                }
+            });
+        }
+        else if (n.name == "RoomGold") {
+            checkBtnClick(e, [&](){ 
+                if (combatSys_) {
+                    if (combatSys_->themeOwned[3]) {
+                        combatSys_->currentTheme = 3;
+                        AddLog("> 司令室を黄金の聖域に変更しました！");
+                    } else if (combatSys_->currentGold >= 5000) {
+                        combatSys_->currentGold -= 5000;
+                        combatSys_->themeOwned[3] = true;
+                        combatSys_->currentTheme = 3;
+                        AddLog("> 司令室を黄金の聖域に変更しました！");
+                    } else { AddLog("ゴールドが足りません！"); }
+                }
+            });
+        }
+        else if (n.name == "UGCSelectChar") {
+            checkBtnClick(e, [&](){ 
+                ugcTargetCharIndex_ = (ugcTargetCharIndex_ + 1) % 5;
+                std::string names[] = {"タンク", "スナイパー", "スカウト", "エンジニア", "ヒーラー"};
+                registry_.get<UITextComponent>(e).text = names[ugcTargetCharIndex_];
+            });
+        }
+        else if (n.name == "UGCFile") {
+            checkBtnClick(e, [&](){ 
+                wchar_t filename[MAX_PATH] = L"";
+                OPENFILENAMEW ofn;
+                ZeroMemory(&ofn, sizeof(ofn));
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = dx_->GetHwnd();
+                ofn.lpstrFilter = L"Image Files\0*.png;*.jpg;*.jpeg\0All Files\0*.*\0";
+                ofn.lpstrFile = filename;
+                ofn.nMaxFile = MAX_PATH;
+                ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
+                ofn.lpstrDefExt = L"png";
+
+                if (GetOpenFileNameW(&ofn)) {
+                    std::string utf8Path = Engine::PathUtils::ToUTF8(filename);
+                    
+                    std::wstring shortNameW = filename;
+                    size_t slash = shortNameW.find_last_of(L"\\/");
+                    if (slash != std::wstring::npos) shortNameW = shortNameW.substr(slash + 1);
+                    std::string shortName = Engine::PathUtils::ToUTF8(shortNameW);
+
+                    std::string targetNames[] = {"Char_Tank", "Char_Sniper", "Char_Scout", "Char_Engineer", "Char_Healer"};
+                    std::string tName = targetNames[ugcTargetCharIndex_];
+                    
+                    auto view = registry_.view<NameComponent, UIImageComponent>();
+                    for (auto ent : view) {
+                        if (view.get<NameComponent>(ent).name == tName) {
+                            auto& img = view.get<UIImageComponent>(ent);
+                            img.texturePath = utf8Path; // UTF-8形式でパスを保持
+                            if (renderer_) {
+                                img.textureHandle = renderer_->LoadTexture2D(img.texturePath, false);
+                            }
+                            
+                            auto tView = registry_.view<NameComponent, UITextComponent>();
+                            for (auto te : tView) {
+                                if (tView.get<NameComponent>(te).name == "UGCNothing") {
+                                    tView.get<UITextComponent>(te).text = shortName + " を適用";
+                                }
+                            }
+                            
+                            AddLog("> 画像を " + shortName + " に差し替えました");
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+        
+        // UIテキストの動的更新 (ゴールドやステータスなど)
+        if (combatSys_) {
+            if (n.name == "CommandHeaderGV") {
+                registry_.get<UITextComponent>(e).text = std::to_string(combatSys_->currentGold) + " G";
+            } else if (n.name == "Gold") {
+                registry_.get<UITextComponent>(e).text = "所持: " + std::to_string(combatSys_->currentGold) + " G";
+            } else if (n.name == "Stat1V") {
+                registry_.get<UITextComponent>(e).text = std::to_string(combatSys_->totalKills) + " 体";
+            } else if (n.name == "Stat2V") {
+                registry_.get<UITextComponent>(e).text = std::to_string((int)combatSys_->totalDamage) + " pts";
+            } else if (n.name == "Stat3V") {
+                registry_.get<UITextComponent>(e).text = std::to_string(combatSys_->totalGoldEarned) + " G";
+            } else if (n.name == "Stat4V") {
+                registry_.get<UITextComponent>(e).text = std::to_string(combatSys_->totalItems) + " 個";
+            } else if (n.name == "BuyTank") {
+                int lv = combatSys_->heroLevels[0];
+                registry_.get<UITextComponent>(e).text = "タンク Lv." + std::to_string(lv) + "         ATK:" + std::to_string(10 + (lv-1)*2) + "/HP:" + std::to_string(100 + (lv-1)*20);
+            } else if (n.name == "BuySniper") {
+                int lv = combatSys_->heroLevels[1];
+                registry_.get<UITextComponent>(e).text = "スナイパー Lv." + std::to_string(lv) + "  ATK:" + std::to_string(25 + (lv-1)*5) + "/HP:" + std::to_string(60 + (lv-1)*10);
+            } else if (n.name == "BuyScout") {
+                int lv = combatSys_->heroLevels[2];
+                registry_.get<UITextComponent>(e).text = "スカウト Lv." + std::to_string(lv) + "      ATK:" + std::to_string(5 + (lv-1)*1) + "/HP:" + std::to_string(80 + (lv-1)*15);
+            } else if (n.name == "BuyEngineer") {
+                int lv = combatSys_->heroLevels[3];
+                registry_.get<UITextComponent>(e).text = "エンジニア Lv." + std::to_string(lv) + "  ATK:" + std::to_string(8 + (lv-1)*1) + "/HP:" + std::to_string(80 + (lv-1)*15);
+            } else if (n.name.find("R_Lv") == 0) {
+                int idx = n.name[4] - '0';
+                if (idx >= 0 && idx < 4) registry_.get<UITextComponent>(e).text = std::to_string(combatSys_->heroLevels[idx]);
+            } else if (n.name.find("R_HP") == 0) {
+                int idx = n.name[4] - '0';
+                if (idx >= 0 && idx < 4) {
+                    int lv = combatSys_->heroLevels[idx];
+                    int hp = (idx==0) ? (100 + (lv-1)*20) : (idx==1) ? (60 + (lv-1)*10) : (idx==2) ? (80 + (lv-1)*15) : (80 + (lv-1)*15);
+                    registry_.get<UITextComponent>(e).text = std::to_string(hp) + "/" + std::to_string(hp);
+                }
+            } else if (n.name.find("R_ATK") == 0) {
+                int idx = n.name[5] - '0';
+                if (idx >= 0 && idx < 4) {
+                    int lv = combatSys_->heroLevels[idx];
+                    int atk = (idx==0) ? (10 + (lv-1)*2) : (idx==1) ? (25 + (lv-1)*5) : (idx==2) ? (5 + (lv-1)*1) : (8 + (lv-1)*1);
+                    registry_.get<UITextComponent>(e).text = std::to_string(atk);
+                }
+            } else if (n.name == "RoomNormal") {
+                if (combatSys_->currentTheme == 0) {
+                    registry_.get<UITextComponent>(e).text = "標準チャンバー                  [適用中]";
+                    registry_.get<UIButtonComponent>(e).normalColor = {0.7f, 1.0f, 0.7f, 1.0f};
+                } else {
+                    registry_.get<UITextComponent>(e).text = "標準チャンバー                  [所有済み]";
+                    registry_.get<UIButtonComponent>(e).normalColor = {0.98f, 0.98f, 0.98f, 1.0f};
+                }
+            } else if (n.name == "RoomCyber") {
+                if (combatSys_->currentTheme == 1) {
+                    registry_.get<UITextComponent>(e).text = "サイバー空間                      [適用中]";
+                    registry_.get<UIButtonComponent>(e).normalColor = {0.7f, 1.0f, 0.7f, 1.0f};
+                } else if (combatSys_->themeOwned[1]) {
+                    registry_.get<UITextComponent>(e).text = "サイバー空間                      [所有済み]";
+                    registry_.get<UIButtonComponent>(e).normalColor = {0.98f, 0.98f, 0.98f, 1.0f};
+                } else {
+                    registry_.get<UITextComponent>(e).text = "サイバー空間                      500 G";
+                    registry_.get<UIButtonComponent>(e).normalColor = {0.98f, 0.98f, 0.98f, 1.0f};
+                }
+            } else if (n.name == "RoomAntique") {
+                if (combatSys_->currentTheme == 2) {
+                    registry_.get<UITextComponent>(e).text = "アンティーク調                  [適用中]";
+                    registry_.get<UIButtonComponent>(e).normalColor = {0.7f, 1.0f, 0.7f, 1.0f};
+                } else if (combatSys_->themeOwned[2]) {
+                    registry_.get<UITextComponent>(e).text = "アンティーク調                  [所有済み]";
+                    registry_.get<UIButtonComponent>(e).normalColor = {0.98f, 0.98f, 0.98f, 1.0f};
+                } else {
+                    registry_.get<UITextComponent>(e).text = "アンティーク調                  1000 G";
+                    registry_.get<UIButtonComponent>(e).normalColor = {0.98f, 0.98f, 0.98f, 1.0f};
+                }
+            } else if (n.name == "RoomGold") {
+                if (combatSys_->currentTheme == 3) {
+                    registry_.get<UITextComponent>(e).text = "黄金の聖域                        [適用中]";
+                    registry_.get<UIButtonComponent>(e).normalColor = {0.7f, 1.0f, 0.7f, 1.0f};
+                } else if (combatSys_->themeOwned[3]) {
+                    registry_.get<UITextComponent>(e).text = "黄金の聖域                        [所有済み]";
+                    registry_.get<UIButtonComponent>(e).normalColor = {0.98f, 0.98f, 0.98f, 1.0f};
+                } else {
+                    registry_.get<UITextComponent>(e).text = "黄金の聖域                        5000 G";
+                    registry_.get<UIButtonComponent>(e).normalColor = {0.98f, 0.98f, 0.98f, 1.0f};
+                }
+            } else if (n.name == "CommandBG" || n.name == "StatPanelBG") {
+                if (combatSys_->currentTheme == 1) registry_.get<UIImageComponent>(e).color = {0.8f, 0.9f, 0.95f, 1.0f}; // Cyber
+                else if (combatSys_->currentTheme == 2) registry_.get<UIImageComponent>(e).color = {0.95f, 0.9f, 0.85f, 1.0f}; // Antique
+                else if (combatSys_->currentTheme == 3) registry_.get<UIImageComponent>(e).color = {1.0f, 0.95f, 0.7f, 1.0f}; // Gold
+                else registry_.get<UIImageComponent>(e).color = {0.95f, 0.96f, 0.98f, 1.0f}; // Normal
+            } else if (n.name == "ChamberBG") {
+                if (combatSys_->currentTheme == 1) registry_.get<UIImageComponent>(e).color = {0.05f, 0.15f, 0.2f, 1.0f}; // Cyber
+                else if (combatSys_->currentTheme == 2) registry_.get<UIImageComponent>(e).color = {0.2f, 0.15f, 0.1f, 1.0f}; // Antique
+                else if (combatSys_->currentTheme == 3) registry_.get<UIImageComponent>(e).color = {0.25f, 0.2f, 0.05f, 1.0f}; // Gold
+                else registry_.get<UIImageComponent>(e).color = {0.05f, 0.05f, 0.1f, 1.0f}; // Normal
+            } else if (n.name == "ChamberBorderTop" || n.name == "ChamberBorderBottom" || n.name == "ChamberBorderLeft" || n.name == "ChamberBorderRight") {
+                if (combatSys_->currentTheme == 1) registry_.get<UIImageComponent>(e).color = {0.0f, 1.0f, 0.8f, 1.0f}; // Cyber
+                else if (combatSys_->currentTheme == 2) registry_.get<UIImageComponent>(e).color = {0.6f, 0.4f, 0.2f, 1.0f}; // Antique
+                else if (combatSys_->currentTheme == 3) registry_.get<UIImageComponent>(e).color = {1.0f, 0.8f, 0.0f, 1.0f}; // Gold
+                else registry_.get<UIImageComponent>(e).color = {0.2f, 0.7f, 1.0f, 1.0f}; // Normal
+            }
+        }
+    }
+    
+    // コア・フィーバーの物理挙動
+    if (currentTab_ == TabType::Command && registry_.valid(coreEntity_) && combatSys_) {
+        float chamberX = 1320.0f;
+        float chamberY = 350.0f;
+        float chamberW = 530.0f;
+        float chamberH = 200.0f;
+        float coreW = 64.0f;
+        float coreH = 48.0f;
+        
+        timeSinceFever_ += dt_;
+        
+        auto& t = registry_.get<RectTransformComponent>(coreEntity_);
+        t.pos.x += coreVel_.x * dt_;
+        t.pos.y += coreVel_.y * dt_;
+        
+        bool hitX = false;
+        bool hitY = false;
+        if (t.pos.x <= chamberX) { t.pos.x = chamberX; coreVel_.x *= -1; hitX = true; }
+        if (t.pos.x + coreW >= chamberX + chamberW) { t.pos.x = chamberX + chamberW - coreW; coreVel_.x *= -1; hitX = true; }
+        if (t.pos.y <= chamberY) { t.pos.y = chamberY; coreVel_.y *= -1; hitY = true; }
+        if (t.pos.y + coreH >= chamberY + chamberH) { t.pos.y = chamberY + chamberH - coreH; coreVel_.y *= -1; hitY = true; }
+        
+        // 四隅ジャストミート！
+        if (hitX && hitY) {
+            combatSys_->TriggerCoreFever();
+            AddLog(">> コア・フィーバー発動！ 全能力アップ！ <<");
+            timeSinceFever_ = 0.0f; // リセット
+            
+            // 四隅ヒット演出
+            auto& img = registry_.get<UIImageComponent>(coreEntity_);
+            img.color = {1.0f, 0.0f, 0.0f, 1.0f}; // 赤く発光
+        }
+        else if (hitX || hitY) {
+            auto& img = registry_.get<UIImageComponent>(coreEntity_);
+            img.color = {0.5f + (rand()%50)/100.0f, 0.5f + (rand()%50)/100.0f, 1.0f, 1.0f};
+            
+            // 【DVDスクリーンセーバーチート】
+            // 長い間(15秒)フィーバーが起きていない場合、次の反射で確実に角に当たるように速度を微調整する
+            if (timeSinceFever_ > 15.0f) {
+                float targetX = (coreVel_.x > 0) ? (chamberX + chamberW - coreW) : chamberX;
+                float targetY = (coreVel_.y > 0) ? (chamberY + chamberH - coreH) : chamberY;
+                float dx = targetX - t.pos.x;
+                float dy = targetY - t.pos.y;
+                
+                float originalSpeed = std::sqrt(coreVel_.x * coreVel_.x + coreVel_.y * coreVel_.y);
+                
+                if (hitX && std::abs(dx) > 0.1f) {
+                    coreVel_.y = dy * (coreVel_.x / dx);
+                } else if (hitY && std::abs(dy) > 0.1f) {
+                    coreVel_.x = dx * (coreVel_.y / dy);
+                }
+                
+                float currentSpeed = std::sqrt(coreVel_.x * coreVel_.x + coreVel_.y * coreVel_.y);
+                if (currentSpeed > 0.001f) {
+                    coreVel_.x = (coreVel_.x / currentSpeed) * originalSpeed;
+                    coreVel_.y = (coreVel_.y / currentSpeed) * originalSpeed;
+                }
+            }
+        }
+    }
+    
     // 格納ボタンクリック判定
     checkBtnClick(stowButton_, [&](){ SwitchAppMode(AppMode::TaskbarBottom); });
-    checkBtnClick(stowRightBtn_, [&](){ SwitchAppMode(AppMode::TaskbarRight); });
-    checkBtnClick(bottomUnstowBtn_, [&](){ SwitchAppMode(AppMode::Fullscreen); });
-    checkBtnClick(rightUnstowBtn_, [&](){ SwitchAppMode(AppMode::Fullscreen); });
+    checkBtnClick(unstowBtn_, [&](){ SwitchAppMode(AppMode::Fullscreen); });
 
-    // 格納中のタスクバー位置・サイズの動的更新（OSのタスクバー変化に追従）
     // 格納中のタスクバー位置・サイズの動的更新（OSのタスクバー変化に追従）
     if (appMode_ == AppMode::TaskbarBottom) {
-        RECT appBarRect = Engine::WindowDX::GetAppBarRect();
-        float bx = static_cast<float>(appBarRect.left);
-        float by = static_cast<float>(appBarRect.top);
-        float bw = static_cast<float>(appBarRect.right - appBarRect.left);
+        RECT appBarRect = Engine::WindowDX::GetWorkArea();
+        float bx = static_cast<float>(appBarRect.right) - 120.0f;
+        float by = static_cast<float>(appBarRect.bottom) - 48.0f;
 
-        // フォールバック（万が一AppBar登録に失敗した場合でも画面内に強制表示して「復帰」ボタンを押せるようにする）
-        if (bw <= 0.0f) {
-            bx = 0.0f;
-            bw = static_cast<float>(Engine::WindowDX::kW);
-            by = static_cast<float>(Engine::WindowDX::kH) - 48.0f;
-        }
-
-        if (registry_.valid(bottomBarPanel_)) {
-            auto& t = registry_.get<RectTransformComponent>(bottomBarPanel_);
-            t.pos.x = bx;
-            t.pos.y = by;
-            t.size.x = bw;
-        }
-        if (registry_.valid(bottomBarText_)) {
-            registry_.get<RectTransformComponent>(bottomBarText_).pos.x = bx + 20.0f;
-            registry_.get<RectTransformComponent>(bottomBarText_).pos.y = by + 13.0f;
-        }
-        if (registry_.valid(bottomUnstowBtn_)) {
-            registry_.get<RectTransformComponent>(bottomUnstowBtn_).pos.x = bx + bw - 120.0f;
-            registry_.get<RectTransformComponent>(bottomUnstowBtn_).pos.y = by + 8.0f;
-        }
-    } else if (appMode_ == AppMode::TaskbarRight) {
-        RECT appBarRect = Engine::WindowDX::GetAppBarRect();
-        float bx = static_cast<float>(appBarRect.left);
-        float by = static_cast<float>(appBarRect.top);
-        float bh = static_cast<float>(appBarRect.bottom - appBarRect.top);
-
-        // フォールバック
-        if (bh <= 0.0f) {
-            bx = static_cast<float>(Engine::WindowDX::kW) - 64.0f;
-            by = 0.0f;
-            bh = static_cast<float>(Engine::WindowDX::kH);
-        }
-
-        if (registry_.valid(rightBarPanel_)) {
-            auto& t = registry_.get<RectTransformComponent>(rightBarPanel_);
-            t.pos.x = bx;
-            t.pos.y = by;
-            t.size.y = bh;
-        }
-        if (registry_.valid(rightBarText_)) {
-            registry_.get<RectTransformComponent>(rightBarText_).pos.x = bx + 22.0f;
-            registry_.get<RectTransformComponent>(rightBarText_).pos.y = by + 80.0f;
-        }
-        if (registry_.valid(rightUnstowBtn_)) {
-            registry_.get<RectTransformComponent>(rightUnstowBtn_).pos.x = bx + 4.0f;
-            registry_.get<RectTransformComponent>(rightUnstowBtn_).pos.y = by + 20.0f;
+        if (registry_.valid(unstowBtn_)) {
+            registry_.get<RectTransformComponent>(unstowBtn_).pos.x = bx;
+            registry_.get<RectTransformComponent>(unstowBtn_).pos.y = by;
         }
     }
 }
@@ -497,10 +776,22 @@ void MainScene::SwitchAppMode(AppMode mode) {
     for (auto e : view) {
         if (registry_.all_of<UITextComponent>(e) || registry_.all_of<UIImageComponent>(e)) {
             // 格納バー関連のエンティティか判定
-            bool isBarEntity = (e == bottomBarPanel_ || e == bottomBarText_ || e == bottomUnstowBtn_ ||
-                                e == rightBarPanel_ || e == rightBarText_ || e == rightUnstowBtn_);
+            bool isBarEntity = (e == unstowBtn_);
+
+            // ★追加: ヒーローと敵（ゲームプレイキャラ）は格納時もオービタル表示するため非表示にしない
+            bool isGameplay = false;
+            if (registry_.all_of<NameComponent>(e)) {
+                const auto& name = registry_.get<NameComponent>(e).name;
+                if (name.find("Hero") != std::string::npos || name.find("Enemy") != std::string::npos || name.find("Char_") != std::string::npos) {
+                    isGameplay = true;
+                }
+            }
             
-            registry_.get<RectTransformComponent>(e).enabled = (mode == AppMode::Fullscreen) ? !isBarEntity : isBarEntity;
+            if (isGameplay) {
+                registry_.get<RectTransformComponent>(e).enabled = true;
+            } else {
+                registry_.get<RectTransformComponent>(e).enabled = (mode == AppMode::Fullscreen) ? !isBarEntity : isBarEntity;
+            }
             
             // ★追加: 状態変更時にフリーズしていた古いホバー状態を強制リセットして暴発を防ぐ
             if (registry_.all_of<UIButtonComponent>(e)) {
@@ -521,28 +812,23 @@ void MainScene::SwitchAppMode(AppMode mode) {
     }
     
     if (mode == AppMode::Fullscreen) {
-        Engine::WindowDX::SetAppBarMode(0);
         SwitchTab(currentTab_); // タブ表示状態を復元
     } else {
-        // 格納モードの場合は、指定されたバーのみ表示
-        if (mode == AppMode::TaskbarBottom) {
-            Engine::WindowDX::SetAppBarMode(1);
-            if (registry_.valid(bottomBarPanel_)) registry_.get<RectTransformComponent>(bottomBarPanel_).enabled = true;
-            if (registry_.valid(bottomBarText_)) registry_.get<RectTransformComponent>(bottomBarText_).enabled = true;
-            if (registry_.valid(bottomUnstowBtn_)) registry_.get<RectTransformComponent>(bottomUnstowBtn_).enabled = true;
-            
-            if (registry_.valid(rightBarPanel_)) registry_.get<RectTransformComponent>(rightBarPanel_).enabled = false;
-            if (registry_.valid(rightBarText_)) registry_.get<RectTransformComponent>(rightBarText_).enabled = false;
-            if (registry_.valid(rightUnstowBtn_)) registry_.get<RectTransformComponent>(rightUnstowBtn_).enabled = false;
-        } else if (mode == AppMode::TaskbarRight) {
-            Engine::WindowDX::SetAppBarMode(2);
-            if (registry_.valid(rightBarPanel_)) registry_.get<RectTransformComponent>(rightBarPanel_).enabled = true;
-            if (registry_.valid(rightBarText_)) registry_.get<RectTransformComponent>(rightBarText_).enabled = true;
-            if (registry_.valid(rightUnstowBtn_)) registry_.get<RectTransformComponent>(rightUnstowBtn_).enabled = true;
-            
-            if (registry_.valid(bottomBarPanel_)) registry_.get<RectTransformComponent>(bottomBarPanel_).enabled = false;
-            if (registry_.valid(bottomBarText_)) registry_.get<RectTransformComponent>(bottomBarText_).enabled = false;
-            if (registry_.valid(bottomUnstowBtn_)) registry_.get<RectTransformComponent>(bottomUnstowBtn_).enabled = false;
+        // オービタル格納時は復帰ボタンのみ表示
+        if (registry_.valid(unstowBtn_)) registry_.get<RectTransformComponent>(unstowBtn_).enabled = true;
+    }
+}
+
+void MainScene::AddLog(const std::string& msg) {
+    logMessages_.push_back(msg);
+    if (logMessages_.size() > 9) {
+        logMessages_.erase(logMessages_.begin());
+    }
+    for (size_t i = 0; i < logTextEntities_.size(); i++) {
+        if (i < logMessages_.size()) {
+            if (registry_.valid(logTextEntities_[i])) {
+                registry_.get<UITextComponent>(logTextEntities_[i]).text = logMessages_[i];
+            }
         }
     }
 }

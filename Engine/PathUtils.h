@@ -152,6 +152,12 @@ private:
                         rootPath = current;
                         return rootPath;
                     }
+                    // Check child "Desktop_Party_Quest" folder
+                    if (std::filesystem::exists(current / "Desktop_Party_Quest") && 
+                        (HasProjectFile(current / "Desktop_Party_Quest") || std::filesystem::exists(current / "Desktop_Party_Quest" / ".git"))) {
+                        rootPath = current / "Desktop_Party_Quest";
+                        return rootPath;
+                    }
                     // Check child "Sae" folder
                     if (std::filesystem::exists(current / "Sae") && 
                         (HasProjectFile(current / "Sae") || std::filesystem::exists(current / "Sae" / ".git"))) {
