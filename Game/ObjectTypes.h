@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -244,12 +244,21 @@ struct CharacterMovementComponent : public Component {
 	CharacterMovementComponent() { type = ComponentType::CharacterMovement; }
 };
 
-// ★追加: カメラ追従対象 (属性)
 struct CameraTargetComponent : public Component {
 	float distance = 10.0f;
 	float height = 3.0f;
 	float smoothSpeed = 5.0f;
 	CameraTargetComponent() { type = ComponentType::CameraTarget; }
+};
+
+// ★追加: デスクトップパーティー用支援コンポーネント
+struct FocusAuraTag : public Component {
+	FocusAuraTag() { type = static_cast<ComponentType>(1005); }
+};
+
+struct DesktopSupportItemComponent : public Component {
+	float lifetime = 10.0f;
+	DesktopSupportItemComponent() { type = static_cast<ComponentType>(1006); }
 };
 
 struct RigidbodyComponent : public Component {

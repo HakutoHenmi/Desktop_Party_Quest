@@ -15,6 +15,7 @@
 // --- Systems ---
 #include "../Systems/UISystem.h"
 #include "../Systems/WorkEnergySystem.h"
+#include "../Systems/DesktopCombatSystem.h"
 
 namespace Game {
 
@@ -72,6 +73,11 @@ private:
     std::vector<entt::entity> selectedEntities_;
     entt::entity selectedEntity_ = entt::null;
     bool isPlaying_ = false;
+
+public:
+    bool IsStowed() const { return appMode_ != AppMode::Fullscreen; }
+    
+private:
     Engine::ParticleEditor particleEditor_;
     GameContext context_;
 
@@ -89,19 +95,29 @@ private:
 
     // ★追加: 格納モード切り替え用のUIエンティティ
     entt::entity stowButton_ = entt::null;
-    entt::entity stowRightBtn_ = entt::null;
-    entt::entity bottomBarPanel_ = entt::null;
-    entt::entity bottomUnstowBtn_ = entt::null;
-    entt::entity bottomBarText_ = entt::null;
-    entt::entity rightBarPanel_ = entt::null;
-    entt::entity rightUnstowBtn_ = entt::null;
-    entt::entity rightBarText_ = entt::null;
+    entt::entity unstowBtn_ = entt::null;
 
     std::vector<entt::entity> commandTabEntities_;
     std::vector<entt::entity> shopTabEntities_;
     std::vector<entt::entity> statusTabEntities_;
 
     void SwitchTab(TabType newTab);
+
+    // ★追加: エネルギーコア・フィーバー用
+    entt::entity coreEntity_ = entt::null;
+    DirectX::XMFLOAT2 coreVel_ = {150.0f, 120.0f};
+    float timeSinceFever_ = 0.0f;
+
+    // ★追加: 外部システムへの参照
+    DesktopCombatSystem* combatSys_ = nullptr;
+    
+    // ★追加: ログ領域用
+    std::vector<entt::entity> logTextEntities_;
+    std::vector<std::string> logMessages_;
+    
+    int ugcTargetCharIndex_ = 0;
+public:
+    void AddLog(const std::string& msg);
 };
 
 } // namespace Game
