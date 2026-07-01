@@ -2,7 +2,14 @@
 #include "ISystem.h"
 #include <random>
 #include <string>
+#include <cmath>
 #include "SpriteCharacterAISystem.h"
+#include "../../Engine/ThirdParty/nlohmann/json.hpp"
+#include "../../Engine/PathUtils.h"
+#include <fstream>
+#include <chrono>
+
+using json = nlohmann::json;
 
 namespace Game {
 
@@ -15,12 +22,35 @@ struct DesktopEnemyComponent : public Component {
     DesktopEnemyComponent() { type = static_cast<ComponentType>(1002); }
 };
 
+struct DesktopCastleComponent : public Component {
+    float hp = 10000.0f;
+    float maxHp = 10000.0f;
+    entt::entity hpBarBg = entt::null;
+    entt::entity hpBarFg = entt::null;
+    DesktopCastleComponent() { type = static_cast<ComponentType>(1008); }
+};
+
 enum class HeroRole {
     Tank,
     Sniper,
     Scout,
     Engineer,
     Healer
+};
+
+struct DesktopProjectileComponent : public Component {
+    float targetX;
+    float targetY;
+    float startX;
+    float startY;
+    float progress;
+    float arcHeight;
+    entt::entity targetEntity;
+    float speed;
+    float damage;
+    bool isHeal;
+    DirectX::XMFLOAT4 color;
+    DesktopProjectileComponent() { type = static_cast<ComponentType>(1009); }
 };
 
 struct DesktopHeroComponent : public Component {
@@ -31,6 +61,7 @@ struct DesktopHeroComponent : public Component {
     entt::entity hpBarFg = entt::null;
     entt::entity weaponEntity = entt::null;
     float attackTimer = 0.0f;
+    float investigationTimer = 0.0f; // スカウトの調査タイマー
     DesktopHeroComponent() { type = static_cast<ComponentType>(1004); }
 };
 
@@ -56,11 +87,35 @@ public:
     float coreFeverTimer = 0.0f;
     
     // --- Economy & Stats ---
-    int currentGold = 300;
+    int currentStage = 1;
+    int enemiesSpawnedInStage = 0;
+    int enemiesKilledInStage = 0;
+    int enemiesPerStage = 10;
+    
+    double currentGold = 1.0e15; // DEBUG
     int totalKills = 0;
-    float totalDamage = 0.0f;
-    int totalGoldEarned = 300;
+    double totalDamage = 0.0;
+    double totalGoldEarned = 1.0e15; // DEBUG
     int totalItems = 0;
+    int prestigeCount = 0;
+    int prestigePoints = 0;
+    int skillLevelAtk = 0;
+    int skillLevelHp = 0;
+    int skillLevelSpd = 0;
+    int skillLevelGold = 0;
+    
+    static std::string FormatNum(double num) {
+        if (num < 1000.0) return std::to_string((long long)num);
+        const char* suffixes[] = {"", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp"};
+        int suffixIndex = 0;
+        while (num >= 1000.0 && suffixIndex < 8) {
+            num /= 1000.0;
+            suffixIndex++;
+        }
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%.2f%s", num, suffixes[suffixIndex]);
+        return std::string(buf);
+    }
     
     // 0:Tank, 1:Sniper, 2:Scout, 3:Engineer
     int heroLevels[4] = {1, 1, 1, 1};
@@ -69,12 +124,164 @@ public:
     int currentTheme = 0;
     bool themeOwned[4] = {true, false, false, false};
     
+    bool hasLoadedProgress = false;
+
+    void SaveProgress(entt::registry& registry) {
+        auto view = registry.view<DesktopPartyProgressComponent>();
+        if (view.empty()) return;
+        auto& prog = registry.get<DesktopPartyProgressComponent>(view.front());
+        
+        json j;
+        j["dataFragments"] = prog.dataFragments;
+        j["equippedIds"] = prog.equippedIds;
+        j["hiredRoles"] = prog.hiredRoles;
+        j["maxDeploymentLimit"] = prog.maxDeploymentLimit;
+        j["lastSavedTime"] = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        
+        j["currentGold"] = currentGold;
+        j["totalKills"] = totalKills;
+        j["totalDamage"] = totalDamage;
+        j["totalGoldEarned"] = totalGoldEarned;
+        j["totalItems"] = totalItems;
+        j["prestigeCount"] = prestigeCount;
+        j["prestigePoints"] = prestigePoints;
+        j["skillLevelAtk"] = skillLevelAtk;
+        j["skillLevelHp"] = skillLevelHp;
+        j["skillLevelSpd"] = skillLevelSpd;
+        j["skillLevelGold"] = skillLevelGold;
+        j["currentStage"] = currentStage;
+        j["heroLevels"] = {heroLevels[0], heroLevels[1], heroLevels[2], heroLevels[3]};
+        j["currentTheme"] = currentTheme;
+        j["themeOwned"] = {themeOwned[0], themeOwned[1], themeOwned[2], themeOwned[3]};
+        
+        json inv = json::array();
+        for (const auto& eq : prog.inventory) {
+            json item;
+            item["id"] = eq.id;
+            item["name"] = eq.name; 
+            item["rarity"] = (int)eq.rarity;
+            item["type"] = (int)eq.type;
+            item["atkMul"] = eq.atkMul;
+            item["spdMul"] = eq.spdMul;
+            item["hpMul"] = eq.hpMul;
+            item["flavorText"] = eq.flavorText;
+            inv.push_back(item);
+        }
+        j["inventory"] = inv;
+        
+        json relics = json::array();
+        for (const auto& r : prog.relicEncyclopedia) {
+            json item;
+            item["id"] = r.id;
+            item["name"] = r.name;
+            item["description"] = r.description;
+            item["isUnlocked"] = r.isUnlocked;
+            item["globalAtkBuff"] = r.globalAtkBuff;
+            item["globalHpBuff"] = r.globalHpBuff;
+            item["globalSpdBuff"] = r.globalSpdBuff;
+            relics.push_back(item);
+        }
+        j["relicEncyclopedia"] = relics;
+        
+        std::string savePath = Engine::PathUtils::GetUnifiedPath("party_progress.json");
+        std::ofstream ofs(savePath);
+        if (ofs.is_open()) {
+            ofs << j.dump(4);
+        }
+    }
+
+    void LoadProgress(entt::registry& registry) {
+        auto view = registry.view<DesktopPartyProgressComponent>();
+        entt::entity e = entt::null;
+        if (view.empty()) {
+            e = registry.create();
+            registry.emplace<DesktopPartyProgressComponent>(e);
+        } else {
+            e = view.front();
+        }
+        auto& prog = registry.get<DesktopPartyProgressComponent>(e);
+        
+        std::string loadPath = Engine::PathUtils::GetUnifiedPath("party_progress.json");
+        std::ifstream ifs(loadPath);
+        if (ifs.is_open()) {
+            json j;
+            try {
+                ifs >> j;
+                prog.dataFragments = j.value("dataFragments", 0);
+                prog.equippedIds = j.value("equippedIds", std::vector<int>{-1,-1,-1,-1,-1});
+                if (j.contains("hiredRoles") && j["hiredRoles"].is_array()) {
+                    prog.hiredRoles.clear();
+                    for (auto& r : j["hiredRoles"]) prog.hiredRoles.push_back(r.get<int>());
+                } else {
+                    prog.hiredRoles = {0, 1, 2, 4}; // Default if missing
+                }
+                prog.maxDeploymentLimit = j.value("maxDeploymentLimit", 4);
+                prog.lastSavedTime = j.value("lastSavedTime", 0LL);
+                
+                currentGold = j.value("currentGold", 0.0) + 1.0e15; // DEBUG
+                totalKills = j.value("totalKills", 0);
+                totalDamage = j.value("totalDamage", 0.0);
+                totalGoldEarned = j.value("totalGoldEarned", 0.0) + 1.0e15; // DEBUG
+                totalItems = j.value("totalItems", 0);
+                prestigeCount = j.value("prestigeCount", 0);
+                prestigePoints = j.value("prestigePoints", 0);
+                skillLevelAtk = j.value("skillLevelAtk", 0);
+                skillLevelHp = j.value("skillLevelHp", 0);
+                skillLevelSpd = j.value("skillLevelSpd", 0);
+                skillLevelGold = j.value("skillLevelGold", 0);
+                currentStage = j.value("currentStage", 1);
+                
+                if (j.contains("heroLevels") && j["heroLevels"].is_array() && j["heroLevels"].size() >= 4) {
+                    for (int i = 0; i < 4; ++i) {
+                        heroLevels[i] = j["heroLevels"][i].get<int>();
+                    }
+                }
+                
+                currentTheme = j.value("currentTheme", 0);
+                if (j.contains("themeOwned") && j["themeOwned"].is_array() && j["themeOwned"].size() >= 4) {
+                    for (int i = 0; i < 4; ++i) {
+                        themeOwned[i] = j["themeOwned"][i].get<bool>();
+                    }
+                }
+                
+                if (j.contains("inventory")) {
+                    for (const auto& item : j["inventory"]) {
+                        Equipment eq;
+                        eq.id = item.value("id", 0);
+                        eq.name = item.value("name", "Unknown Part");
+                        eq.rarity = (EquipRarity)item.value("rarity", 0);
+                        eq.type = (EquipType)item.value("type", 0);
+                        eq.atkMul = item.value("atkMul", 0.0f);
+                        eq.spdMul = item.value("spdMul", 0.0f);
+                        eq.hpMul = item.value("hpMul", 0.0f);
+                        eq.flavorText = item.value("flavorText", "");
+                        prog.inventory.push_back(eq);
+                    }
+                }
+                
+                if (j.contains("relicEncyclopedia")) {
+                    for (const auto& item : j["relicEncyclopedia"]) {
+                        InternetRelic r;
+                        r.id = item.value("id", 0);
+                        r.name = item.value("name", "Unknown");
+                        r.description = item.value("description", "");
+                        r.isUnlocked = item.value("isUnlocked", false);
+                        r.globalAtkBuff = item.value("globalAtkBuff", 0.0f);
+                        r.globalHpBuff = item.value("globalHpBuff", 0.0f);
+                        r.globalSpdBuff = item.value("globalSpdBuff", 0.0f);
+                        prog.relicEncyclopedia.push_back(r);
+                    }
+                }
+            } catch(...) {}
+        }
+    }
+    
     void TriggerCoreFever() {
         isCoreFever = true;
         coreFeverTimer = 5.0f;
     }
 
-    entt::entity CreateDamageText(entt::registry& reg, float x, float y, float damage) {
+    entt::entity CreateDamageText(entt::registry& reg, float x, float y, double damage, bool isStowed = false) {
         auto ent = reg.create();
         auto& t = reg.emplace<RectTransformComponent>(ent);
         t.anchor = {0.0f, 0.0f};
@@ -83,9 +290,10 @@ public:
         t.size = {100, 30};
         
         auto& txt = reg.emplace<UITextComponent>(ent);
-        txt.text = std::to_string((int)damage);
-        txt.fontSize = 24.0f;
-        txt.color = {1.0f, 0.2f, 0.2f, 1.0f}; // 赤
+        txt.text = (damage > 0.0) ? FormatNum(damage) : "";
+        txt.fontSize = isStowed ? 10.0f : 24.0f;
+        txt.color = isStowed ? DirectX::XMFLOAT4{1.0f, 0.2f, 0.2f, 0.6f} : DirectX::XMFLOAT4{1.0f, 0.2f, 0.2f, 1.0f}; // 赤
+        txt.fontPath = "Resources/Textures/fonts/Huninn/Huninn-Regular.ttf";
         
         reg.emplace<DesktopDamageTextComponent>(ent);
         return ent;
@@ -112,7 +320,7 @@ public:
         return ent;
     }
 
-    entt::entity CreateHealText(entt::registry& reg, float x, float y, float amount) {
+    entt::entity CreateHealText(entt::registry& reg, float x, float y, double amount, bool isStowed = false) {
         auto ent = reg.create();
         auto& t = reg.emplace<RectTransformComponent>(ent);
         t.anchor = {0.0f, 0.0f};
@@ -121,16 +329,118 @@ public:
         t.size = {100, 30};
         
         auto& txt = reg.emplace<UITextComponent>(ent);
-        txt.text = "+" + std::to_string((int)amount);
-        txt.fontSize = 24.0f;
-        txt.color = {0.2f, 1.0f, 0.2f, 1.0f}; // 緑
+        txt.text = "+" + FormatNum(amount);
+        txt.fontSize = isStowed ? 10.0f : 24.0f;
+        txt.color = isStowed ? DirectX::XMFLOAT4{0.2f, 1.0f, 0.2f, 0.6f} : DirectX::XMFLOAT4{0.2f, 1.0f, 0.2f, 1.0f}; // 緑
         
         reg.emplace<DesktopDamageTextComponent>(ent);
         return ent;
     }
 
 public:
+    double GetLevelUpCost(int roleIndex) {
+        if (roleIndex < 0 || roleIndex >= 4) return 0.0;
+        int lv = heroLevels[roleIndex];
+        return 100.0 * std::pow(1.5, lv - 1);
+    }
+
+    void GetHeroStats(entt::registry& registry, int roleIndex, float& outHp, float& outMaxHp, float& outAtk, float& outSpd) {
+        int lv = 1;
+        if (roleIndex >= 0 && roleIndex < 4) lv = heroLevels[roleIndex];
+        
+        float baseMaxHp = 100.0f, baseAtk = 10.0f, baseSpd = 1.0f;
+        if (roleIndex == 0) { baseMaxHp = 100.0f * static_cast<float>(std::pow(1.2, lv-1)); baseAtk = 10.0f * static_cast<float>(std::pow(1.25, lv-1)); baseSpd = 2.0f; }
+        else if (roleIndex == 1) { baseMaxHp = 60.0f * static_cast<float>(std::pow(1.15, lv-1)); baseAtk = 25.0f * static_cast<float>(std::pow(1.3, lv-1)); baseSpd = 2.2f; }
+        else if (roleIndex == 2) { baseMaxHp = 80.0f * static_cast<float>(std::pow(1.2, lv-1)); baseAtk = 5.0f * static_cast<float>(std::pow(1.2, lv-1)); baseSpd = 4.0f; }
+        else if (roleIndex == 3) { baseMaxHp = 80.0f * static_cast<float>(std::pow(1.2, lv-1)); baseAtk = 8.0f * static_cast<float>(std::pow(1.2, lv-1)); baseSpd = 1.5f; }
+        else if (roleIndex == 4) { baseMaxHp = 90.0f; baseAtk = 5.0f; baseSpd = 2.5f; }
+
+        // 1. マイルストーンボーナス
+        float milestoneMul = 1.0f;
+        if (lv >= 10) milestoneMul *= 2.0f;
+        if (lv >= 25) milestoneMul *= 3.0f;
+        if (lv >= 50) milestoneMul *= 5.0f;
+        if (lv >= 100) milestoneMul *= 10.0f;
+        
+        baseMaxHp *= milestoneMul;
+        baseAtk *= milestoneMul;
+
+        // 2. プレステージボーナス (スキルツリー)
+        float skillHpBonus = skillLevelHp * 0.5f; // 1Lvにつき +50%
+        float skillAtkBonus = skillLevelAtk * 0.5f;
+        float skillSpdBonus = skillLevelSpd * 0.1f; // 1Lvにつき +10%
+        
+        baseMaxHp *= (1.0f + skillHpBonus);
+        baseAtk *= (1.0f + skillAtkBonus);
+        baseSpd *= (1.0f + skillSpdBonus);
+
+        // 3. シナジーボーナス
+        if (roleIndex == 1) { // スナイパー (タンクHPシナジー)
+            int tankLv = heroLevels[0];
+            float tankHp = 100.0f * static_cast<float>(std::pow(1.2, tankLv-1));
+            if (tankLv >= 10) tankHp *= 2.0f;
+            if (tankLv >= 25) tankHp *= 3.0f;
+            if (tankLv >= 50) tankHp *= 5.0f;
+            if (tankLv >= 100) tankHp *= 10.0f;
+            tankHp *= (1.0f + skillHpBonus);
+            baseAtk += tankHp * 0.01f;
+        }
+        if (roleIndex == 2) { // スカウト (累積ゴールドシナジー)
+            float goldBonus = (float)std::log10(totalGoldEarned + 1.0) * 0.2f;
+            baseSpd += goldBonus;
+        }
+        if (roleIndex == 3) { // エンジニア (全体レベルシナジー)
+            int totalLv = heroLevels[0] + heroLevels[1] + heroLevels[2] + heroLevels[3];
+            baseAtk *= (1.0f + (totalLv * 0.05f));
+        }
+
+        float globalAtkBuff = 0.0f, globalHpBuff = 0.0f, globalSpdBuff = 0.0f;
+        float eqAtkBuff = 0.0f, eqHpBuff = 0.0f, eqSpdBuff = 0.0f;
+        
+        auto viewProg = registry.view<DesktopPartyProgressComponent>();
+        if (!viewProg.empty()) {
+            auto& prog = registry.get<DesktopPartyProgressComponent>(viewProg.front());
+            for (const auto& relic : prog.relicEncyclopedia) {
+                if (relic.isUnlocked) {
+                    globalAtkBuff += relic.globalAtkBuff;
+                    globalHpBuff += relic.globalHpBuff;
+                    globalSpdBuff += relic.globalSpdBuff;
+                }
+            }
+            int eqId = -1;
+            if (roleIndex >= 0 && roleIndex < 5) eqId = prog.equippedIds[roleIndex];
+            if (eqId != -1) {
+                for (const auto& eq : prog.inventory) {
+                    if (eq.id == (uint32_t)eqId) {
+                        eqAtkBuff = eq.atkMul;
+                        eqHpBuff = eq.hpMul;
+                        eqSpdBuff = eq.spdMul;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        outMaxHp = baseMaxHp * (1.0f + globalHpBuff + eqHpBuff);
+        outAtk = baseAtk * (1.0f + globalAtkBuff + eqAtkBuff);
+        outSpd = baseSpd * (1.0f + globalSpdBuff + eqSpdBuff);
+        
+        outHp = outMaxHp;
+        auto heroView = registry.view<DesktopHeroComponent>();
+        for (auto h : heroView) {
+            auto& hero = registry.get<DesktopHeroComponent>(h);
+            if ((int)hero.role == roleIndex) {
+                outHp = hero.hp;
+                break;
+            }
+        }
+    }
+
     void Update(entt::registry& registry, GameContext& ctx) override {
+        if (!hasLoadedProgress) {
+            LoadProgress(registry);
+            hasLoadedProgress = true;
+        }
         if (!ctx.isPlaying) return;
         
         // --- 0. コア・フィーバーのタイマー更新 ---
@@ -144,14 +454,105 @@ public:
         static bool wasStowed = false;
         bool justUnstowed = (wasStowed && !ctx.isStowed);
 
+        // --- 全体バフの集計 ---
+        float globalAtkBuff = 0.0f;
+        float globalHpBuff = 0.0f;
+        float globalSpdBuff = 0.0f;
+        auto viewProg = registry.view<DesktopPartyProgressComponent>();
+        if (!viewProg.empty()) {
+            auto& prog = registry.get<DesktopPartyProgressComponent>(viewProg.front());
+            for (const auto& relic : prog.relicEncyclopedia) {
+                if (relic.isUnlocked) {
+                    globalAtkBuff += relic.globalAtkBuff;
+                    globalHpBuff += relic.globalHpBuff;
+                    globalSpdBuff += relic.globalSpdBuff;
+                }
+            }
+        }
+
+        // --- 拠点（城）の管理 ---
+        float screenW = ctx.viewportSize.x > 0 ? ctx.viewportSize.x : 1920.0f;
+        float screenH = ctx.viewportSize.y > 0 ? ctx.viewportSize.y : 1080.0f;
+        
+        auto castleView = registry.view<DesktopCastleComponent>();
+        entt::entity castleEnt = entt::null;
+        float baseCastleX = 50.0f;
+        float baseCastleY = screenH / 2.0f;
+        
+        if (castleView.empty()) {
+            castleEnt = registry.create();
+            registry.emplace<NameComponent>(castleEnt, "Castle");
+            auto& rect = registry.emplace<RectTransformComponent>(castleEnt);
+            rect.anchor = {0.0f, 0.0f}; rect.pivot = {0.0f, 0.0f};
+            rect.pos = {baseCastleX, baseCastleY - 100.0f};
+            rect.size = {150.0f, 200.0f};
+            auto& img = registry.emplace<UIImageComponent>(castleEnt);
+            img.texturePath = "Resources/Textures/white1x1.png"; // TODO: 拠点画像
+            if (ctx.renderer) img.textureHandle = ctx.renderer->LoadTexture2D(img.texturePath, false);
+            img.color = {0.8f, 0.8f, 0.8f, 1.0f};
+            img.layer = -5;
+            
+            auto& castle = registry.emplace<DesktopCastleComponent>(castleEnt);
+            castle.hpBarBg = registry.create();
+            auto& bgRect = registry.emplace<RectTransformComponent>(castle.hpBarBg);
+            bgRect.anchor = {0.0f, 0.0f}; bgRect.pivot = {0.0f, 0.0f};
+            bgRect.size = {150, 15};
+            auto& bgImg = registry.emplace<UIImageComponent>(castle.hpBarBg);
+            bgImg.texturePath = "Resources/Textures/white1x1.png";
+            bgImg.color = {0.2f, 0.2f, 0.2f, 1.0f};
+            bgImg.layer = -4;
+            if (ctx.renderer) bgImg.textureHandle = ctx.renderer->LoadTexture2D(bgImg.texturePath);
+            
+            castle.hpBarFg = registry.create();
+            auto& fgRect = registry.emplace<RectTransformComponent>(castle.hpBarFg);
+            fgRect.anchor = {0.0f, 0.0f}; fgRect.pivot = {0.0f, 0.0f};
+            fgRect.size = {150, 15};
+            auto& fgImg = registry.emplace<UIImageComponent>(castle.hpBarFg);
+            fgImg.texturePath = "Resources/Textures/white1x1.png";
+            fgImg.color = {0.2f, 0.9f, 0.2f, 1.0f};
+            fgImg.layer = -3;
+            if (ctx.renderer) fgImg.textureHandle = ctx.renderer->LoadTexture2D(fgImg.texturePath);
+        } else {
+            castleEnt = castleView.front();
+        }
+
         // --- ★オービタル（格納）モードにおける強制サイズ変更と敵の追従 ---
-        float targetScale = ctx.isStowed ? 16.0f : 128.0f;
+        float targetScale = ctx.isStowed ? 5.0f : 32.0f; // キャラクターサイズを大幅に縮小
         auto sizeView = registry.view<RectTransformComponent>();
         
         POINT pt; GetCursorPos(&pt);
         float mouseX = static_cast<float>(pt.x);
         float mouseY = static_cast<float>(pt.y);
         
+        // 城の座標更新
+        auto& castleRef = registry.get<DesktopCastleComponent>(castleEnt);
+        auto& castleRect = registry.get<RectTransformComponent>(castleEnt);
+        if (ctx.isStowed) {
+            castleRect.pos = {mouseX - 10.0f, mouseY - 10.0f};
+            castleRect.size = {20.0f, 20.0f};
+            registry.get<UIImageComponent>(castleEnt).color = {0.8f, 0.8f, 0.8f, 0.5f};
+        } else {
+            castleRect.pos = {50.0f, 0.0f}; // 左から少し離した位置
+            castleRect.size = {30.0f, screenH}; // 壁自体は薄く
+            registry.get<UIImageComponent>(castleEnt).color = {0.6f, 0.8f, 1.0f, 1.0f};
+        }
+        
+        float castleCenterX = castleRect.pos.x + castleRect.size.x / 2.0f;
+        float castleCenterY = castleRect.pos.y + castleRect.size.y / 2.0f;
+        
+        // 城HPバー更新
+        if (registry.valid(castleRef.hpBarBg)) {
+            auto& bgRect = registry.get<RectTransformComponent>(castleRef.hpBarBg);
+            bgRect.pos = {castleRect.pos.x, castleRect.pos.y - 20.0f};
+            bgRect.enabled = !ctx.isStowed;
+        }
+        if (registry.valid(castleRef.hpBarFg)) {
+            auto& fgRect = registry.get<RectTransformComponent>(castleRef.hpBarFg);
+            fgRect.pos = {castleRect.pos.x, castleRect.pos.y - 20.0f};
+            fgRect.size.x = (ctx.isStowed ? 20.0f : 150.0f) * (castleRef.hp / castleRef.maxHp);
+            fgRect.enabled = !ctx.isStowed;
+        }
+
         for (auto e : sizeView) {
             if (registry.all_of<DesktopHeroComponent>(e) || registry.all_of<DesktopEnemyComponent>(e)) {
                 auto& rect = sizeView.get<RectTransformComponent>(e);
@@ -183,38 +584,49 @@ public:
         }
         
         // --- 散らばり（分離）処理 ---
-        if (ctx.isStowed) {
-            std::vector<entt::entity> orbitalEntities;
-            for (auto e : sizeView) {
-                if (registry.all_of<DesktopHeroComponent>(e) || registry.all_of<DesktopEnemyComponent>(e)) {
-                    orbitalEntities.push_back(e);
-                }
+        std::vector<entt::entity> orbitalEntities;
+        for (auto e : sizeView) {
+            if (registry.all_of<DesktopHeroComponent>(e) || registry.all_of<DesktopEnemyComponent>(e)) {
+                orbitalEntities.push_back(e);
             }
+        }
+        
+        
+        for (auto e : orbitalEntities) {
+            auto& rect = sizeView.get<RectTransformComponent>(e);
+            float cx = rect.pos.x + rect.size.x / 2.0f;
+            float cy = rect.pos.y + rect.size.y / 2.0f;
             
-            for (auto e : orbitalEntities) {
-                auto& rect = sizeView.get<RectTransformComponent>(e);
-                float cx = rect.pos.x + rect.size.x / 2.0f;
-                float cy = rect.pos.y + rect.size.y / 2.0f;
+            for (auto other : orbitalEntities) {
+                if (e == other) continue;
                 
-                for (auto other : orbitalEntities) {
-                    if (e == other) continue;
-                    auto& oRect = sizeView.get<RectTransformComponent>(other);
-                    float ox = oRect.pos.x + oRect.size.x / 2.0f;
-                    float oy = oRect.pos.y + oRect.size.y / 2.0f;
-                    float dx = cx - ox;
-                    float dy = cy - oy;
-                    float dist = std::sqrt(dx*dx + dy*dy);
-                    
-                    if (dist < 16.0f) { // キャラが重ならないように弾く距離
-                        if (dist < 0.001f) {
-                            dx = static_cast<float>((rand() % 100) - 50);
-                            dy = static_cast<float>((rand() % 100) - 50);
-                            dist = std::sqrt(dx*dx + dy*dy) + 0.001f;
-                        }
-                        float pushForce = (16.0f - dist) * 15.0f; // 強い弾き力
-                        rect.pos.x += (dx / dist) * pushForce * ctx.dt;
-                        rect.pos.y += (dy / dist) * pushForce * ctx.dt;
+                bool eIsEnemy = registry.all_of<DesktopEnemyComponent>(e);
+                bool oIsEnemy = registry.all_of<DesktopEnemyComponent>(other);
+                
+                // 自分が敵で、相手が味方の場合は弾かれない（動かない）
+                if (eIsEnemy && !oIsEnemy) continue;
+                
+                auto& oRect = sizeView.get<RectTransformComponent>(other);
+                float ox = oRect.pos.x + oRect.size.x / 2.0f;
+                float oy = oRect.pos.y + oRect.size.y / 2.0f;
+                float dx = cx - ox;
+                float dy = cy - oy;
+                float dist = std::sqrt(dx*dx + dy*dy);
+                
+                // 敵と味方の間は少し広めの距離（密着しない）を保ち、同盟同士は少しの距離を保つ
+                float separateDist = (eIsEnemy != oIsEnemy) 
+                    ? (ctx.isStowed ? 30.0f : 40.0f) 
+                    : (ctx.isStowed ? 20.0f : 15.0f); // 展開時の味方同士は重なりを許容し小さめに（15.0f）
+                
+                if (dist < separateDist) {
+                    if (dist < 0.001f) {
+                        dx = static_cast<float>((rand() % 100) - 50);
+                        dy = static_cast<float>((rand() % 100) - 50);
+                        dist = std::sqrt(dx*dx + dy*dy) + 0.001f;
                     }
+                    float pushForce = (separateDist - dist) * 10.0f; // 弾き力
+                    rect.pos.x += (dx / dist) * pushForce * ctx.dt;
+                    rect.pos.y += (dy / dist) * pushForce * ctx.dt;
                 }
             }
         }
@@ -224,42 +636,62 @@ public:
         int activeEnemyCount = 0;
         for (auto it = enemyView.begin(); it != enemyView.end(); ++it) activeEnemyCount++;
 
+        int maxEnemies = ctx.isStowed ? 50 : 3;
+        float spawnDelay = ctx.isStowed ? 3.0f : 1.5f;
+
         spawnTimer -= ctx.dt;
-        if (activeEnemyCount < 3 && spawnTimer <= 0.0f) {
-            // 敵を生成
-            entt::entity newEnemy = registry.create();
-            registry.emplace<NameComponent>(newEnemy, "Enemy_Virus");
+        if (activeEnemyCount < maxEnemies && spawnTimer <= 0.0f && enemiesSpawnedInStage < enemiesPerStage) {
+            spawnTimer = spawnDelay;
             
-            auto& rect = registry.emplace<RectTransformComponent>(newEnemy);
-            rect.enabled = true; // 常に表示
-            rect.anchor = {0.0f, 0.0f};
-            rect.pivot = {0.0f, 0.0f};
+            int spawnCount = ctx.isStowed ? 15 : 1; // 一度に湧く数
             
-            float spawnX, spawnY;
+            float baseSpawnX, baseSpawnY;
             if (ctx.isStowed) {
-                spawnX = mouseX + static_cast<float>(rand() % 100 - 50);
-                spawnY = mouseY + static_cast<float>(rand() % 100 - 50);
+                baseSpawnX = screenW + 300.0f; // 常に画面の右枠外から湧くようにする
+                baseSpawnY = mouseY + static_cast<float>(rand() % 800 - 400);
             } else {
-                float screenW = ctx.viewportSize.x > 0 ? ctx.viewportSize.x : 1920.0f;
-                float screenH = ctx.viewportSize.y > 0 ? ctx.viewportSize.y : 1080.0f;
-                float maxSpawnX = (std::max)(100.0f, screenW - 700.0f);
                 float maxSpawnY = (std::max)(100.0f, screenH - 200.0f);
-                spawnX = 100.0f + (rand() % (int)maxSpawnX);
-                spawnY = 100.0f + (rand() % (int)maxSpawnY);
+                baseSpawnX = screenW - 100.0f; // 右端から無限湧き
+                baseSpawnY = 100.0f + (rand() % (int)maxSpawnY);
             }
-            rect.pos = {spawnX, spawnY};
-            rect.size = {targetScale, targetScale};
+
+            for (int i = 0; i < spawnCount; i++) {
+                if (enemiesSpawnedInStage >= enemiesPerStage) break;
+                if (activeEnemyCount + i >= maxEnemies) break;
+                
+                enemiesSpawnedInStage++;
+                // 敵を生成
+                entt::entity newEnemy = registry.create();
+                registry.emplace<NameComponent>(newEnemy, "Enemy_Virus");
+                
+                auto& rect = registry.emplace<RectTransformComponent>(newEnemy);
+                rect.enabled = true; // 常に表示
+                rect.anchor = {0.0f, 0.0f};
+                rect.pivot = {0.0f, 0.0f};
+                
+                float spawnX = baseSpawnX;
+                float spawnY = baseSpawnY;
+                if (ctx.isStowed && spawnCount > 1) {
+                    spawnX += static_cast<float>(rand() % 400 - 200); // 集団で散らばる
+                    spawnY += static_cast<float>(rand() % 400 - 200);
+                }
+                rect.pos = {spawnX, spawnY};
+                rect.size = {targetScale, targetScale};
             
             auto& img = registry.emplace<UIImageComponent>(newEnemy);
-            img.texturePath = "Resources/Textures/Characters/enemy_virus.png";
+            img.texturePath = "Resources/Textures/white1x1.png"; // 敵を四角テクスチャに
             if (ctx.renderer) {
                 img.textureHandle = ctx.renderer->LoadTexture2D(img.texturePath, false);
             }
+            img.color = {0.8f, 0.2f, 0.2f, 1.0f}; // 赤色
             img.layer = -4; // キャラより少し手前に変更 (見えやすくするため)
             
+            float enemyScale = static_cast<float>(std::pow(1.3, currentStage - 1));
+            enemyScale *= (1.0f + prestigeCount * 0.2f); // 敵はプレステージ回数に応じて少しだけ強くなる
+
             auto& enemy = registry.emplace<DesktopEnemyComponent>(newEnemy);
-            enemy.hp = 300.0f;
-            enemy.maxHp = 300.0f;
+            enemy.maxHp = 300.0f * enemyScale;
+            enemy.hp = enemy.maxHp;
             
             // HPバー（背景）
             enemy.hpBarBg = registry.create();
@@ -287,15 +719,14 @@ public:
             fgImg.layer = -2; // 背景(-3)より手前に描画
             if (ctx.renderer) fgImg.textureHandle = ctx.renderer->LoadTexture2D(fgImg.texturePath);
             
-            spawnTimer = 3.0f; // 次の出現までの時間
+            } // for end
         }
-
         std::vector<entt::entity> enemiesToDestroy;
         for (auto currentEnemy : enemyView) {
             // 敵が存在する場合、HPバーの位置を更新
             auto& enemy = registry.get<DesktopEnemyComponent>(currentEnemy);
             auto& enemyRect = registry.get<RectTransformComponent>(currentEnemy);
-            
+
             if (registry.valid(enemy.hpBarBg)) {
                 auto& bgRect = registry.get<RectTransformComponent>(enemy.hpBarBg);
                 bgRect.pos = {enemyRect.pos.x + 24.0f, enemyRect.pos.y - 15.0f};
@@ -308,48 +739,127 @@ public:
             
             // HP0で死亡
             if (enemy.hp <= 0.0f) {
-                float goldGained = 50.0f;
-                auto auraHeroes = registry.view<FocusAuraTag>();
-                if (!auraHeroes.empty()) goldGained *= 1.5f; // オーラ時は獲得ゴールドもアップ
+                float enemyScale = static_cast<float>(std::pow(1.3, currentStage - 1));
+                enemyScale *= (1.0f + prestigeCount * 0.2f);
                 
-                currentGold += (int)goldGained;
-                totalGoldEarned += (int)goldGained;
+                double goldGained = 50.0 * enemyScale;
+                goldGained *= (1.0 + skillLevelGold * 0.5); // スキルボーナス
+                auto auraHeroes = registry.view<FocusAuraTag>();
+                if (!auraHeroes.empty()) goldGained *= 1.5; // オーラ時は獲得ゴールドもアップ
+                
+                currentGold += goldGained;
+                totalGoldEarned += goldGained;
                 totalKills += 1;
+                enemiesKilledInStage += 1;
                 
                 auto eff = CreateDamageText(registry, enemyRect.pos.x, enemyRect.pos.y, 0);
-                registry.get<UITextComponent>(eff).text = "GOLD +" + std::to_string((int)goldGained);
+                registry.get<UITextComponent>(eff).text = "GOLD +" + FormatNum(goldGained);
                 registry.get<UITextComponent>(eff).color = {0.8f, 0.6f, 0.1f, 1.0f};
                 if (ctx.isStowed) registry.get<UITextComponent>(eff).fontSize = 12.0f;
 
                 if (registry.valid(enemy.hpBarBg)) registry.destroy(enemy.hpBarBg);
                 if (registry.valid(enemy.hpBarFg)) registry.destroy(enemy.hpBarFg);
                 enemiesToDestroy.push_back(currentEnemy);
-            } else {
-                // 敵の反撃
-                enemy.attackTimer -= ctx.dt;
-                if (enemy.attackTimer <= 0.0f) {
-                    enemy.attackTimer = 2.0f; // 2秒に1回攻撃
-                    // ランダムなキャラにダメージ
-                    auto heroView = registry.view<SpriteCharacterAIComponent, RectTransformComponent, DesktopHeroComponent>();
-                    std::vector<entt::entity> heroes;
-                    for (auto h : heroView) heroes.push_back(h);
-                    if (!heroes.empty()) {
-                        entt::entity target = heroes[rand() % heroes.size()];
-                        auto& hero = registry.get<DesktopHeroComponent>(target);
-                        auto& hRect = registry.get<RectTransformComponent>(target);
-                        float dmg = 5.0f + (rand() % 5);
+
+                // --- ハクスラドロップ判定 ---
+                if (rand() % 100 < 30) { // 30%の確率で装備品ドロップ
+                    auto viewProgDrop = registry.view<DesktopPartyProgressComponent>();
+                    if (!viewProgDrop.empty()) {
+                        auto& prog = registry.get<DesktopPartyProgressComponent>(viewProgDrop.front());
+                        Equipment eq;
+                        eq.id = (uint32_t)prog.inventory.size() + 1;
                         
-                        // 集中オーラ（静の評価）による防御ボーナス
-                        if (registry.all_of<FocusAuraTag>(target)) {
-                            dmg *= 0.5f; 
+                        int r = rand() % 100;
+                        if (r < 5) eq.rarity = EquipRarity::Artifact;
+                        else if (r < 20) eq.rarity = EquipRarity::Epic;
+                        else if (r < 50) eq.rarity = EquipRarity::Rare;
+                        else eq.rarity = EquipRarity::Common;
+                        
+                        int itemLevel = rand() % 10 + 1 + (currentStage / 5);
+                        eq.type = (EquipType)(rand() % 5);
+                        std::wstring names[] = {L"USBメモリ", L"拡張基板", L"コンデンサ", L"冷却ファン", L"LANケーブル"};
+                        eq.name = Engine::PathUtils::ToUTF8(names[(int)eq.type] + L" (Lv" + std::to_wstring(itemLevel) + L")");
+                        
+                        float mulBase = (0.05f + (itemLevel * 0.02f)) * static_cast<float>(std::pow(1.1, currentStage / 5));
+                        if (eq.rarity == EquipRarity::Rare) mulBase *= 1.5f;
+                        if (eq.rarity == EquipRarity::Epic) mulBase *= 2.0f;
+                        if (eq.rarity == EquipRarity::Artifact) mulBase *= 3.0f;
+                        
+                        // ランダム幅は80%〜120%
+                        auto getRandFactor = []() { return 0.8f + (rand() % 41) / 100.0f; };
+                        eq.atkMul = mulBase * getRandFactor();
+                        eq.spdMul = mulBase * getRandFactor();
+                        eq.hpMul = mulBase * getRandFactor();
+                        
+                        // ウィルス混入（デメリット付き強力版）の可能性
+                        if (eq.rarity == EquipRarity::Artifact || eq.rarity == EquipRarity::Epic) {
+                            if (rand() % 100 < 30) {
+                                eq.hpMul = -0.1f;
+                                eq.atkMul += 0.2f;
+                                eq.name = Engine::PathUtils::ToUTF8(L"[感染] ") + eq.name;
+                                eq.flavorText = Engine::PathUtils::ToUTF8(L"強力だがウイルスが混入している。");
+                            }
                         }
                         
-                        hero.hp -= dmg;
-                        float tx = hRect.pos.x + 32.0f + (rand() % 40 - 20.0f);
-                        float ty = hRect.pos.y - 20.0f + (rand() % 40 - 20.0f);
-                        auto eff = CreateDamageText(registry, tx, ty, dmg);
-                        registry.get<UITextComponent>(eff).color = {1.0f, 0.2f, 0.2f, 1.0f}; // 被ダメージは赤色
-                        if (ctx.isStowed) registry.get<UITextComponent>(eff).fontSize = 10.0f;
+                        prog.inventory.push_back(eq);
+                        SaveProgress(registry); // 取得時にオートセーブ
+                        
+                        // UI通知
+                        auto dropEff = CreateDamageText(registry, enemyRect.pos.x, enemyRect.pos.y - 30.0f, 0, ctx.isStowed);
+                        registry.get<UITextComponent>(dropEff).text = "DROP: " + eq.name;
+                        registry.get<UITextComponent>(dropEff).color = eq.GetRarityColor();
+                    }
+                }
+            } else {
+                // 敵の移動ロジック
+                float dx = castleCenterX - (enemyRect.pos.x + enemyRect.size.x / 2.0f);
+                float dy = castleCenterY - (enemyRect.pos.y + enemyRect.size.y / 2.0f);
+                
+                // タンクが生きているかチェック（物理的な壁）
+                bool isBlockedByTank = false;
+                entt::entity tankEnt = entt::null;
+                auto heroView = registry.view<DesktopHeroComponent, RectTransformComponent>();
+                for (auto he : heroView) {
+                    if (heroView.get<DesktopHeroComponent>(he).role == HeroRole::Tank) {
+                        tankEnt = he; break;
+                    }
+                }
+                
+                if (!ctx.isStowed && registry.valid(tankEnt)) {
+                    auto& tankRect = registry.get<RectTransformComponent>(tankEnt);
+                    auto& tankHero = registry.get<DesktopHeroComponent>(tankEnt);
+                    if (tankHero.hp > 0.0f) {
+                        float tankRightEdge = tankRect.pos.x + tankRect.size.x + 20.0f;
+                        if (enemyRect.pos.x <= tankRightEdge && enemyRect.pos.x + enemyRect.size.x >= tankRect.pos.x) {
+                            isBlockedByTank = true;
+                            enemyRect.pos.x = tankRightEdge;
+                        }
+                    }
+                }
+                
+                float dist = std::sqrt(dx*dx + dy*dy);
+                if (dist > 50.0f && !isBlockedByTank) {
+                    float speed = ctx.isStowed ? 50.0f : 80.0f; // 移動速度
+                    enemyRect.pos.x += (dx / dist) * speed * ctx.dt;
+                    enemyRect.pos.y += (dy / dist) * speed * ctx.dt;
+                } else {
+                    // 城 または タンクへの攻撃
+                    enemy.attackTimer -= ctx.dt;
+                    if (enemy.attackTimer <= 0.0f) {
+                        enemy.attackTimer = 1.0f; // 1秒に1回攻撃
+                        float dmg = 5.0f + (rand() % 5);
+                        
+                        if (isBlockedByTank) {
+                            auto& tankHero = registry.get<DesktopHeroComponent>(tankEnt);
+                            tankHero.hp -= dmg;
+                            auto eff = CreateDamageText(registry, enemyRect.pos.x - 30.0f, enemyRect.pos.y, dmg, ctx.isStowed);
+                            registry.get<UITextComponent>(eff).color = ctx.isStowed ? DirectX::XMFLOAT4{1.0f, 0.2f, 0.2f, 0.6f} : DirectX::XMFLOAT4{1.0f, 0.2f, 0.2f, 1.0f};
+                        } else {
+                            castleRef.hp -= dmg;
+                            auto eff = CreateDamageText(registry, castleCenterX, castleCenterY, dmg, ctx.isStowed);
+                            registry.get<UITextComponent>(eff).color = ctx.isStowed ? DirectX::XMFLOAT4{1.0f, 0.2f, 0.2f, 0.6f} : DirectX::XMFLOAT4{1.0f, 0.2f, 0.2f, 1.0f};
+                            // TODO: 城のHPが0になった時のゲームオーバー処理
+                        }
                     }
                 }
             }
@@ -357,70 +867,130 @@ public:
         for (auto e : enemiesToDestroy) {
             registry.destroy(e);
         }
+        
+        // ステージクリア判定
+        if (enemiesKilledInStage >= enemiesPerStage) {
+            currentStage++;
+            enemiesKilledInStage = 0;
+            enemiesSpawnedInStage = 0;
+            spawnTimer = 5.0f;
+            
+            // screenWとscreenHは既に定義されているため削除
+            auto eff = CreateDamageText(registry, screenW/2.0f - 100.0f, screenH/2.0f, 0);
+            registry.get<UITextComponent>(eff).text = "STAGE " + std::to_string(currentStage) + " START!";
+            registry.get<UITextComponent>(eff).color = {1.0f, 0.8f, 0.2f, 1.0f};
+            registry.get<UITextComponent>(eff).fontSize = 32.0f;
+        }
 
-        // --- 1.5. 味方の初期化とタンク位置の取得 ---
+        // --- 1.5. 味方の雇用枠と同期・初期化 ---
+        auto heroView = registry.view<DesktopHeroComponent>();
+        int currentHeroCount = 0;
+        for (auto it = heroView.begin(); it != heroView.end(); ++it) currentHeroCount++;
+        
+        auto viewProgHired = registry.view<DesktopPartyProgressComponent>();
+        if (!viewProgHired.empty()) {
+            auto& prog = registry.get<DesktopPartyProgressComponent>(viewProgHired.front());
+            if (currentHeroCount != prog.hiredRoles.size()) {
+                if (currentHeroCount > prog.hiredRoles.size()) {
+                    std::vector<entt::entity> toDestroy;
+                    for (auto e : heroView) toDestroy.push_back(e);
+                    
+                    for (auto e : toDestroy) {
+                        if (registry.valid(e) && registry.all_of<DesktopHeroComponent>(e)) {
+                            auto& hero = registry.get<DesktopHeroComponent>(e);
+                            if (registry.valid(hero.hpBarBg)) registry.destroy(hero.hpBarBg);
+                            if (registry.valid(hero.hpBarFg)) registry.destroy(hero.hpBarFg);
+                            registry.destroy(e);
+                        }
+                    }
+                    currentHeroCount = 0;
+                }
+                
+                for (size_t i = currentHeroCount; i < prog.hiredRoles.size(); i++) {
+                    int r = prog.hiredRoles[i];
+                    entt::entity e = registry.create();
+                    auto& hero = registry.emplace<DesktopHeroComponent>(e);
+                    hero.role = static_cast<HeroRole>(r);
+                    
+                    registry.emplace<NameComponent>(e, "Char_" + std::to_string(i));
+                    
+                    auto& rect = registry.emplace<RectTransformComponent>(e);
+                    rect.anchor = {0.0f, 0.0f}; rect.pivot = {0.0f, 0.0f};
+                    rect.pos = {200.0f + (rand()%100), 400.0f + (rand()%200)};
+                    rect.size = {targetScale, targetScale};
+                    rect.enabled = true;
+                    
+                    auto& img = registry.emplace<UIImageComponent>(e);
+                    img.texturePath = "Resources/Textures/white1x1.png";
+                    if (ctx.renderer) img.textureHandle = ctx.renderer->LoadTexture2D(img.texturePath, false);
+                    img.layer = -5;
+                    
+                    DirectX::XMFLOAT4 heroColor = {1, 1, 1, 1};
+                    int lv = 1;
+                    if (r == 0) { lv = heroLevels[0]; hero.maxHp = 100.0f * static_cast<float>(std::pow(1.2, lv-1)); heroColor = {0.2f, 0.6f, 1.0f, 1.0f}; }
+                    else if (r == 1) { lv = heroLevels[1]; hero.maxHp = 60.0f * static_cast<float>(std::pow(1.15, lv-1)); heroColor = {1.0f, 0.8f, 0.2f, 1.0f}; }
+                    else if (r == 2) { lv = heroLevels[2]; hero.maxHp = 80.0f * static_cast<float>(std::pow(1.2, lv-1)); heroColor = {0.2f, 0.8f, 0.2f, 1.0f}; }
+                    else if (r == 4) { lv = heroLevels[3]; hero.maxHp = 90.0f * static_cast<float>(std::pow(1.2, lv-1)); heroColor = {1.0f, 0.4f, 0.6f, 1.0f}; }
+                    hero.hp = hero.maxHp;
+                    img.color = heroColor;
+                    
+                    registry.emplace<SpriteCharacterAIComponent>(e);
+                    
+                    hero.hpBarBg = registry.create();
+                    auto& bgRect = registry.emplace<RectTransformComponent>(hero.hpBarBg);
+                    bgRect.enabled = !ctx.isStowed;
+                    bgRect.anchor = {0.0f, 0.0f}; bgRect.pivot = {0.0f, 0.0f}; bgRect.size = {60, 8};
+                    auto& bgImg = registry.emplace<UIImageComponent>(hero.hpBarBg);
+                    bgImg.texturePath = "Resources/Textures/white1x1.png";
+                    bgImg.color = {0.2f, 0.2f, 0.2f, 1.0f};
+                    bgImg.layer = -4;
+                    if (ctx.renderer) bgImg.textureHandle = ctx.renderer->LoadTexture2D(bgImg.texturePath);
+                    
+                    hero.hpBarFg = registry.create();
+                    auto& fgRect = registry.emplace<RectTransformComponent>(hero.hpBarFg);
+                    fgRect.enabled = !ctx.isStowed;
+                    fgRect.anchor = {0.0f, 0.0f}; fgRect.pivot = {0.0f, 0.0f}; fgRect.size = {60, 8};
+                    auto& fgImg = registry.emplace<UIImageComponent>(hero.hpBarFg);
+                    fgImg.texturePath = "Resources/Textures/white1x1.png";
+                    fgImg.color = {0.2f, 0.9f, 0.2f, 1.0f};
+                    fgImg.layer = -2;
+                    if (ctx.renderer) fgImg.textureHandle = ctx.renderer->LoadTexture2D(fgImg.texturePath);
+                }
+            }
+        }
+        
         float tankX = 0.0f, tankY = 0.0f;
         entt::entity tankEntity = entt::null;
         auto charView = registry.view<SpriteCharacterAIComponent, RectTransformComponent>();
-        
         for (auto entity : charView) {
-            auto& rect = charView.get<RectTransformComponent>(entity);
-            if (!rect.enabled) continue;
-
-            // 味方のHP管理コンポーネントがなければ追加
-            if (!registry.all_of<DesktopHeroComponent>(entity)) {
-                auto& hero = registry.emplace<DesktopHeroComponent>(entity);
-                auto name = registry.all_of<NameComponent>(entity) ? registry.get<NameComponent>(entity).name : "";
-                
-                std::string weaponTex = "";
-                if (name == "Char_Tank") { hero.role = HeroRole::Tank; hero.maxHp = 150.0f; hero.hp = 150.0f; weaponTex = "Resources/Textures/Weapons/weapon_shield_t.png"; }
-                else if (name == "Char_Sniper") { hero.role = HeroRole::Sniper; hero.maxHp = 80.0f; hero.hp = 80.0f; weaponTex = "Resources/Textures/Weapons/weapon_gun_t.png"; }
-                else if (name == "Char_Scout") { hero.role = HeroRole::Scout; hero.maxHp = 100.0f; hero.hp = 100.0f; weaponTex = "Resources/Textures/Weapons/weapon_sword_t.png"; }
-                else if (name == "Char_Engineer") { hero.role = HeroRole::Engineer; hero.maxHp = 100.0f; hero.hp = 100.0f; weaponTex = "Resources/Textures/Weapons/weapon_spanner_t.png"; }
-                else if (name == "Char_Healer") { hero.role = HeroRole::Healer; hero.maxHp = 90.0f; hero.hp = 90.0f; weaponTex = "Resources/Textures/Weapons/weapon_staff_t.png"; }
-                
-                hero.hpBarBg = registry.create();
-                auto& bgRect = registry.emplace<RectTransformComponent>(hero.hpBarBg);
-                bgRect.enabled = !ctx.isStowed;
-                bgRect.anchor = {0.0f, 0.0f}; bgRect.pivot = {0.0f, 0.0f}; bgRect.size = {60, 8};
-                auto& bgImg = registry.emplace<UIImageComponent>(hero.hpBarBg);
-                bgImg.texturePath = "Resources/Textures/white1x1.png";
-                bgImg.color = {0.2f, 0.2f, 0.2f, 1.0f};
-                bgImg.layer = -4;
-                if (ctx.renderer) bgImg.textureHandle = ctx.renderer->LoadTexture2D(bgImg.texturePath);
-                
-                hero.hpBarFg = registry.create();
-                auto& fgRect = registry.emplace<RectTransformComponent>(hero.hpBarFg);
-                fgRect.enabled = !ctx.isStowed;
-                fgRect.anchor = {0.0f, 0.0f}; fgRect.pivot = {0.0f, 0.0f}; fgRect.size = {60, 8};
-                auto& fgImg = registry.emplace<UIImageComponent>(hero.hpBarFg);
-                fgImg.texturePath = "Resources/Textures/white1x1.png";
-                fgImg.color = {0.2f, 0.9f, 0.2f, 1.0f};
-                fgImg.layer = -2;
-                if (ctx.renderer) fgImg.textureHandle = ctx.renderer->LoadTexture2D(fgImg.texturePath);
-                
-                if (!weaponTex.empty()) {
-                    hero.weaponEntity = registry.create();
-                    auto& wRect = registry.emplace<RectTransformComponent>(hero.weaponEntity);
-                    wRect.enabled = true;
-                    wRect.anchor = {0.0f, 0.0f}; wRect.pivot = {0.5f, 0.5f}; wRect.size = {64, 64};
-                    auto& wImg = registry.emplace<UIImageComponent>(hero.weaponEntity);
-                    wImg.texturePath = weaponTex;
-                    wImg.color = {1.0f, 1.0f, 1.0f, 1.0f};
-                    wImg.layer = -6;
-                    if (ctx.renderer) wImg.textureHandle = ctx.renderer->LoadTexture2D(wImg.texturePath, false);
+            if (registry.all_of<DesktopHeroComponent>(entity)) {
+                auto& hero = registry.get<DesktopHeroComponent>(entity);
+                if (hero.role == HeroRole::Tank) {
+                    auto& rect = charView.get<RectTransformComponent>(entity);
+                    tankX = rect.pos.x + rect.size.x / 2.0f;
+                    tankY = rect.pos.y + rect.size.y / 2.0f;
+                    tankEntity = entity;
                 }
-            }
-
-            auto& hero = registry.get<DesktopHeroComponent>(entity);
-            if (hero.role == HeroRole::Tank) {
-                tankX = rect.pos.x + rect.size.x / 2.0f;
-                tankY = rect.pos.y + rect.size.y / 2.0f;
-                tankEntity = entity;
             }
         }
 
         // --- 2. キャラクターのAI制御＆味方HP管理 ---
+        auto getEquipBuffs = [&](int roleIndex, float& outAtk, float& outHp, float& outSpd) {
+            outAtk = 0.0f; outHp = 0.0f; outSpd = 0.0f;
+            if (!viewProg.empty()) {
+                auto& prog = registry.get<DesktopPartyProgressComponent>(viewProg.front());
+                int eqId = prog.equippedIds[roleIndex];
+                if (eqId != -1) {
+                    for (const auto& eq : prog.inventory) {
+                        if (eq.id == (uint32_t)eqId) {
+                            outAtk = eq.atkMul; outHp = eq.hpMul; outSpd = eq.spdMul;
+                            break;
+                        }
+                    }
+                }
+            }
+        };
+
         for (auto entity : charView) {
             auto& ai = charView.get<SpriteCharacterAIComponent>(entity);
             auto& rect = charView.get<RectTransformComponent>(entity);
@@ -428,14 +998,26 @@ public:
 
             auto& hero = registry.get<DesktopHeroComponent>(entity);
             
+            float eqAtk = 0.0f, eqHp = 0.0f, eqSpd = 0.0f;
+            getEquipBuffs((int)hero.role, eqAtk, eqHp, eqSpd);
+
+            // 最大HPの動的更新
+            float dummyHp, newMaxHp, dummyAtk, dummySpd;
+            GetHeroStats(registry, (int)hero.role, dummyHp, newMaxHp, dummyAtk, dummySpd);
+            if (std::abs(hero.maxHp - newMaxHp) > 0.1f) {
+                float ratio = hero.hp / hero.maxHp;
+                hero.maxHp = newMaxHp;
+                hero.hp = newMaxHp * ratio;
+            }
+            
             // 味方のHPバー位置更新
             if (registry.valid(hero.hpBarBg)) {
                 auto& bgRect = registry.get<RectTransformComponent>(hero.hpBarBg);
-                bgRect.pos = {rect.pos.x + 34.0f, rect.pos.y - 10.0f};
+                bgRect.pos = {rect.pos.x - 30.0f, rect.pos.y - rect.size.y / 2.0f - 12.0f};
             }
             if (registry.valid(hero.hpBarFg)) {
                 auto& fgRect = registry.get<RectTransformComponent>(hero.hpBarFg);
-                fgRect.pos = {rect.pos.x + 34.0f, rect.pos.y - 10.0f};
+                fgRect.pos = {rect.pos.x - 30.0f, rect.pos.y - rect.size.y / 2.0f - 12.0f};
                 fgRect.size.x = 60.0f * (hero.hp / hero.maxHp);
             }
             
@@ -477,145 +1059,137 @@ public:
             
             float targetX = cx;
             float targetY = cy;
-            bool shouldMoveToTarget = true;
             bool shouldAttackTarget = false;
-            float attackRange = 80.0f;
-            float attackDmg = 10.0f;
+            float attackRange = 0.0f;
+            float attackDmg = dummyAtk;
+            float attackInterval = 1.0f;
 
+            // TD役割に基づく基本目標座標
+            // 横（X）は薄く（あまり散らばらない）
+            float indexOffsetX = (((uint32_t)entity * 37) % 40) - 20.0f; 
+            // 縦（Y）に広く散らばらせる
+            float indexOffsetY = (((uint32_t)entity * 17) % 400) - 200.0f;  
+            
+            if (hero.role == HeroRole::Tank) { // 重装クロスボウ (最前線)
+                targetX = castleCenterX + 350.0f + indexOffsetX * 0.5f; // 前衛は少し幅を狭める
+                targetY = castleCenterY + indexOffsetY;
+                attackRange = 250.0f;
+                attackInterval = 1.5f;
+                shouldAttackTarget = true;
+            } else if (hero.role == HeroRole::Sniper) { // ロングボウ (後衛)
+                targetX = castleCenterX + 25.0f + indexOffsetX; // 壁のすぐ前
+                targetY = castleCenterY + indexOffsetY;
+                attackRange = 2000.0f; // 無限
+                attackInterval = 4.0f; // 遅いが高火力
+                attackDmg *= 5.0f; 
+                shouldAttackTarget = true;
+            } else if (hero.role == HeroRole::Scout) { // ショートボウ (中衛)
+                targetX = castleCenterX + 65.0f + indexOffsetX;
+                targetY = castleCenterY + indexOffsetY;
+                attackRange = 600.0f;
+                attackInterval = 0.3f; // 手数が多いが低火力
+                attackDmg *= 0.2f;
+                shouldAttackTarget = true;
+            } else if (hero.role == HeroRole::Healer) { // 癒やしの矢 (壁の後ろ)
+                targetX = castleCenterX - 45.0f + indexOffsetX; // マイナスにして壁の後ろに配置
+                targetY = castleCenterY + indexOffsetY;
+                attackInterval = 2.0f;
+                shouldAttackTarget = false; // 味方を回復する
+            }
+
+            if (ctx.isStowed) {
+                // カーソル格納モード: キャラを非表示にし、カーソル（城）と同化させる
+                rect.enabled = false;
+                if (registry.valid(hero.weaponEntity)) registry.get<RectTransformComponent>(hero.weaponEntity).enabled = false;
+                if (registry.valid(hero.hpBarBg)) registry.get<RectTransformComponent>(hero.hpBarBg).enabled = false;
+                if (registry.valid(hero.hpBarFg)) registry.get<RectTransformComponent>(hero.hpBarFg).enabled = false;
+                
+                targetX = castleCenterX;
+                targetY = castleCenterY;
+                attackRange = 250.0f; // 射程を短くして、画面内に入ってから撃つようにする
+            } else {
+                rect.enabled = true;
+                if (registry.valid(hero.weaponEntity)) registry.get<RectTransformComponent>(hero.weaponEntity).enabled = true;
+                if (registry.valid(hero.hpBarBg)) registry.get<RectTransformComponent>(hero.hpBarBg).enabled = true;
+                if (registry.valid(hero.hpBarFg)) registry.get<RectTransformComponent>(hero.hpBarFg).enabled = true;
+            }
+
+            // 移動ロジック
+            float moveSpeed = ai.speed;
+            moveSpeed *= (1.0f + globalSpdBuff + eqSpd);
+            
+            float dx = targetX - cx;
+            float dy = targetY - cy;
+            float targetDist = std::sqrt(dx*dx + dy*dy);
+            
+            if (targetDist > 10.0f) {
+                ai.moveDir.x = dx / targetDist; ai.moveDir.y = dy / targetDist;
+                
+                // 展開時・格納時に素早くパッと元の位置に戻るためのスピード補正
+                float speedMultiplier = 1.0f;
+                if (targetDist > 300.0f) speedMultiplier = 15.0f;
+                else if (targetDist > 100.0f) speedMultiplier = 4.0f;
+                
+                rect.pos.x += ai.moveDir.x * moveSpeed * speedMultiplier * ctx.dt;
+                rect.pos.y += ai.moveDir.y * moveSpeed * speedMultiplier * ctx.dt;
+            }
+
+            // 攻撃/回復ロジック
             if (hero.role == HeroRole::Healer) {
                 hero.attackTimer -= ctx.dt;
-                entt::entity lowestHpTarget = entt::null;
-                float lowestRatio = 1.0f;
                 
-                auto hView = registry.view<DesktopHeroComponent, RectTransformComponent>();
-                for (auto he : hView) {
-                    auto& th = hView.get<DesktopHeroComponent>(he);
-                    float ratio = th.hp / th.maxHp;
-                    if (ratio < lowestRatio && th.hp > 0.0f && th.hp < th.maxHp) {
-                        lowestRatio = ratio;
-                        lowestHpTarget = he;
+                // 城の回復チェック
+                float castleRatio = castleRef.hp / castleRef.maxHp;
+                if (castleRatio < 0.9f) {
+                    if (hero.attackTimer <= 0.0f) {
+                        float healAmt = 50.0f * (1.0f + skillLevelAtk * 0.5f);
+                        entt::entity proj = registry.create();
+                        auto& pRect = registry.emplace<RectTransformComponent>(proj);
+                        pRect.anchor = {0.0f, 0.0f}; pRect.pivot = {0.0f, 0.0f};
+                        pRect.pos = {cx, cy}; pRect.size = {8.0f, 8.0f}; pRect.enabled = true;
+                        auto& pImg = registry.emplace<UIImageComponent>(proj);
+                        pImg.texturePath = "Resources/Textures/white1x1.png";
+                        if (ctx.renderer) pImg.textureHandle = ctx.renderer->LoadTexture2D(pImg.texturePath, false);
+                        pImg.color = {0.2f, 1.0f, 0.2f, 1.0f}; pImg.layer = -5;
+                        auto& projComp = registry.emplace<DesktopProjectileComponent>(proj);
+                        projComp.targetEntity = castleEnt;
+                        projComp.speed = 500.0f; projComp.damage = healAmt; projComp.isHeal = true; projComp.color = pImg.color;
+                        projComp.startX = cx; projComp.startY = cy; projComp.progress = 0.0f; projComp.arcHeight = 50.0f;
+                        hero.attackTimer = attackInterval;
                     }
-                }
-                
-                if (lowestRatio < 0.9f && registry.valid(lowestHpTarget)) {
-                    auto& tRect = registry.get<RectTransformComponent>(lowestHpTarget);
-                    targetX = tRect.pos.x + tRect.size.x / 2.0f;
-                    targetY = tRect.pos.y + tRect.size.y / 2.0f;
-                    float dx = targetX - cx; float dy = targetY - cy;
-                    float dist = std::sqrt(dx*dx + dy*dy);
-                    
-                    if (dist <= 80.0f || ctx.isStowed) {
+                } else {
+                    // 味方の回復チェック
+                    entt::entity lowestHpTarget = entt::null;
+                    float lowestRatio = 1.0f;
+                    auto hView = registry.view<DesktopHeroComponent, RectTransformComponent>();
+                    for (auto he : hView) {
+                        auto& th = hView.get<DesktopHeroComponent>(he);
+                        float ratio = th.hp / th.maxHp;
+                        if (ratio < lowestRatio && th.hp > 0.0f && th.hp < th.maxHp) {
+                            lowestRatio = ratio;
+                            lowestHpTarget = he;
+                        }
+                    }
+                    if (lowestRatio < 0.9f && registry.valid(lowestHpTarget)) {
                         if (hero.attackTimer <= 0.0f) {
-                            auto& th = registry.get<DesktopHeroComponent>(lowestHpTarget);
-                            float healAmt = 25.0f;
-                            th.hp += healAmt;
-                            if (th.hp > th.maxHp) th.hp = th.maxHp;
-                            auto eff = CreateHealText(registry, targetX - 20.0f + (rand() % 40 - 20.0f), targetY - 40.0f + (rand() % 40 - 20.0f), healAmt);
-                            CreateDamageParticle(registry, ctx, cx, cy - 20.0f, "Resources/Textures/soft_circle.png", {0.2f, 1.0f, 0.2f, 1.0f}, ctx.isStowed ? 16.0f : 48.0f);
-                            if (ctx.isStowed) registry.get<UITextComponent>(eff).fontSize = 10.0f;
-                            hero.attackTimer = 1.5f;
+                            float healAmt = 25.0f * (1.0f + skillLevelAtk * 0.5f);
+                            entt::entity proj = registry.create();
+                            auto& pRect = registry.emplace<RectTransformComponent>(proj);
+                            pRect.anchor = {0.0f, 0.0f}; pRect.pivot = {0.0f, 0.0f};
+                            pRect.pos = {cx, cy}; pRect.size = {8.0f, 8.0f}; pRect.enabled = true;
+                            auto& pImg = registry.emplace<UIImageComponent>(proj);
+                            pImg.texturePath = "Resources/Textures/white1x1.png";
+                            if (ctx.renderer) pImg.textureHandle = ctx.renderer->LoadTexture2D(pImg.texturePath, false);
+                            pImg.color = {0.2f, 1.0f, 0.2f, 1.0f}; pImg.layer = -5;
+                            auto& projComp = registry.emplace<DesktopProjectileComponent>(proj);
+                            projComp.targetEntity = lowestHpTarget;
+                            projComp.speed = 500.0f; projComp.damage = healAmt; projComp.isHeal = true; projComp.color = pImg.color;
+                            projComp.startX = cx; projComp.startY = cy; projComp.progress = 0.0f; projComp.arcHeight = 50.0f;
+                            hero.attackTimer = attackInterval;
                         }
                     }
-                } else {
-                    // 回復不要時はタンクの後方で陣形維持
-                    if (registry.valid(tankEntity) && tankEntity != entity) {
-                        targetX = tankX - 80.0f;
-                        targetY = tankY - 80.0f;
-                    } else {
-                        shouldMoveToTarget = false; // タンクがいない場合はランダム移動
-                    }
                 }
-            } else if (hero.role == HeroRole::Scout) {
-                attackRange = 100.0f;
-                attackDmg = 5.0f + (heroLevels[2] - 1) * 1.0f;
-                
-                if (currentAiMode == PartyAIMode::Attack && registry.valid(currentEnemy)) {
-                    auto& eRect = registry.get<RectTransformComponent>(currentEnemy);
-                    targetX = eRect.pos.x + eRect.size.x / 2.0f;
-                    targetY = eRect.pos.y + eRect.size.y / 2.0f;
-                    shouldAttackTarget = true;
-                } else {
-                    shouldMoveToTarget = false; // 自由に巡回調査
-                }
-            } else {
-                // Tank, Sniper, Engineer
-                if (registry.valid(currentEnemy)) {
-                    auto& eRect = registry.get<RectTransformComponent>(currentEnemy);
-                    float ex = eRect.pos.x + eRect.size.x / 2.0f;
-                    float ey = eRect.pos.y + eRect.size.y / 2.0f;
-                    shouldAttackTarget = (currentAiMode != PartyAIMode::Collect);
-                    
-                    if (hero.role == HeroRole::Tank) {
-                        targetX = ex; targetY = ey;
-                        attackRange = 80.0f; attackDmg = 10.0f + (heroLevels[0] - 1) * 2.0f;
-                    } else if (hero.role == HeroRole::Sniper) {
-                        float dx = tankX - ex; float dy = tankY - ey;
-                        float ndist = std::sqrt(dx*dx + dy*dy);
-                        if (ndist > 0.1f) { 
-                            targetX = tankX + (dx/ndist)*150.0f; 
-                            targetY = tankY + (dy/ndist)*150.0f; 
-                        } else { 
-                            targetX = tankX + 150.0f; targetY = tankY; 
-                        }
-                        attackRange = 400.0f; attackDmg = 25.0f + (heroLevels[1] - 1) * 5.0f;
-                    } else if (hero.role == HeroRole::Engineer) {
-                        targetX = ex + 50.0f; targetY = ey - 50.0f;
-                        attackRange = 100.0f; attackDmg = 8.0f + (heroLevels[3] - 1) * 1.0f;
-                    }
-                } else {
-                    // 敵がいない場合の陣形維持
-                    if (hero.role == HeroRole::Tank) {
-                        shouldMoveToTarget = false; // リーダーとしてランダム巡回
-                    } else if (hero.role == HeroRole::Sniper) {
-                        targetX = tankX - 100.0f; targetY = tankY + 50.0f;
-                    } else if (hero.role == HeroRole::Engineer) {
-                        targetX = tankX + 80.0f; targetY = tankY + 80.0f;
-                    }
-                }
-            }
-
-            float moveSpeed = ai.speed;
-            if (isCoreFever) moveSpeed *= 2.0f;
-            if (currentAiMode == PartyAIMode::Attack) moveSpeed *= 1.5f;
-            if (currentAiMode == PartyAIMode::Collect) moveSpeed *= 2.0f;
-            
-            if (shouldMoveToTarget) {
-                float dx = targetX - cx;
-                float dy = targetY - cy;
-                float targetDist = std::sqrt(dx*dx + dy*dy);
-                
-                // 陣形時の停止距離
-                float stopDist = 10.0f;
-                if (!registry.valid(currentEnemy)) stopDist = 40.0f; // 索敵時は少しルーズに
-                
-                if (targetDist > stopDist || ctx.isStowed) {
-                    ai.moveDir.x = dx / targetDist; ai.moveDir.y = dy / targetDist;
-                    rect.pos.x += ai.moveDir.x * moveSpeed * ctx.dt;
-                    rect.pos.y += ai.moveDir.y * moveSpeed * ctx.dt;
-                }
-            } else {
-                // ランダム巡回（Scout、非戦闘時のTankなど）
-                ai.changeDirTimer -= ctx.dt;
-                if (ai.changeDirTimer <= 0.0f) {
-                    int r = rand() % 100;
-                    if (r < 30) {
-                        ai.moveDir = {0, 0};
-                        ai.currentWaitTime = 1.0f + (rand() % 20) / 10.0f;
-                    } else {
-                        float angle = (rand() % 360) * 3.14159f / 180.0f;
-                        ai.moveDir.x = std::cos(angle);
-                        ai.moveDir.y = std::sin(angle);
-                        ai.currentWaitTime = 2.0f + (rand() % 30) / 10.0f;
-                    }
-                    ai.changeDirTimer = ai.currentWaitTime;
-                }
-                rect.pos.x += ai.moveDir.x * moveSpeed * ctx.dt;
-                rect.pos.y += ai.moveDir.y * moveSpeed * ctx.dt;
-            }
-
-            // --- 攻撃処理 ---
-            if (shouldAttackTarget && registry.valid(currentEnemy)) {
-                if (currentAiMode == PartyAIMode::Attack) attackDmg *= 1.5f;
+            } else if (shouldAttackTarget && registry.valid(currentEnemy)) {
                 if (isCoreFever) attackDmg *= 2.0f;
                 
                 auto& eRect = registry.get<RectTransformComponent>(currentEnemy);
@@ -623,27 +1197,32 @@ public:
                 float ey = eRect.pos.y + eRect.size.y / 2.0f;
                 float distToEnemy = std::sqrt((ex-cx)*(ex-cx) + (ey-cy)*(ey-cy));
                 
-                if (ctx.isStowed) attackRange = 40.0f;
+                if (ctx.isStowed) attackRange = 100.0f;
                 
                 if (distToEnemy <= attackRange) {
                     hero.attackTimer -= ctx.dt;
                     if (hero.attackTimer <= 0.0f) {
-                        auto& enemy = registry.get<DesktopEnemyComponent>(currentEnemy);
-                        enemy.hp -= attackDmg;
-                        totalDamage += attackDmg;
-                        auto eff = CreateDamageText(registry, ex - 20.0f + (rand() % 40 - 20.0f), ey - 40.0f + (rand() % 40 - 20.0f), attackDmg);
-                        registry.get<UITextComponent>(eff).color = {0.4f, 0.8f, 1.0f, 1.0f};
-                        CreateDamageParticle(registry, ctx, cx, cy - 20.0f, "Resources/Textures/soft_circle.png", {0.4f, 0.8f, 1.0f, 0.6f}, ctx.isStowed ? 16.0f : 32.0f);
-                        if (ctx.isStowed) registry.get<UITextComponent>(eff).fontSize = 10.0f;
-                        
-                        hero.attackTimer = (hero.role == HeroRole::Sniper) ? 2.5f : ((hero.role == HeroRole::Scout) ? 0.8f : 1.5f);
+                        entt::entity proj = registry.create();
+                        auto& pRect = registry.emplace<RectTransformComponent>(proj);
+                        pRect.anchor = {0.0f, 0.0f}; pRect.pivot = {0.0f, 0.0f};
+                        pRect.pos = {cx, cy}; pRect.size = {12.0f, 4.0f}; pRect.enabled = true;
+                        auto& pImg = registry.emplace<UIImageComponent>(proj);
+                        pImg.texturePath = "Resources/Textures/white1x1.png";
+                        if (ctx.renderer) pImg.textureHandle = ctx.renderer->LoadTexture2D(pImg.texturePath, false);
+                        pImg.color = registry.get<UIImageComponent>(entity).color; pImg.layer = -5;
+                        auto& projComp = registry.emplace<DesktopProjectileComponent>(proj);
+                        projComp.targetEntity = currentEnemy;
+                        projComp.speed = 800.0f; projComp.damage = attackDmg; projComp.isHeal = false; projComp.color = pImg.color;
+                        projComp.startX = cx; projComp.startY = cy; projComp.progress = 0.0f;
+                        float d = std::sqrt((ex-cx)*(ex-cx) + (ey-cy)*(ey-cy));
+                        projComp.arcHeight = d * 0.2f; // 距離に応じて弧の高さを変える
+                        hero.attackTimer = attackInterval;
                     }
                 }
             }
             
             // 画面外に出ないようにクランプ
-            float screenW = ctx.viewportSize.x > 0 ? ctx.viewportSize.x : 1920.0f;
-            float screenH = ctx.viewportSize.y > 0 ? ctx.viewportSize.y : 1080.0f;
+            // screenW, screenHは既に定義済みなので削除
             float maxY = screenH - 100.0f; 
             
             if (rect.pos.x < 0) rect.pos.x = 0;
@@ -676,6 +1255,62 @@ public:
             }
         }
         for (auto e : deadTexts) {
+            registry.destroy(e);
+        }
+
+        // --- 4. プロジェクタイル（矢・回復弾）の更新 ---
+        auto projView = registry.view<DesktopProjectileComponent, RectTransformComponent>();
+        std::vector<entt::entity> projsToDestroy;
+        for (auto pEnt : projView) {
+            auto& proj = projView.get<DesktopProjectileComponent>(pEnt);
+            auto& pRect = projView.get<RectTransformComponent>(pEnt);
+            
+            float tx = proj.targetX, ty = proj.targetY;
+            if (registry.valid(proj.targetEntity) && registry.all_of<RectTransformComponent>(proj.targetEntity)) {
+                auto& tRect = registry.get<RectTransformComponent>(proj.targetEntity);
+                tx = tRect.pos.x + tRect.size.x / 2.0f;
+                ty = tRect.pos.y + tRect.size.y / 2.0f;
+                proj.targetX = tx; proj.targetY = ty;
+            }
+            
+            float dx = tx - proj.startX; float dy = ty - proj.startY;
+            float totalDist = std::sqrt(dx*dx + dy*dy);
+            if (totalDist < 0.1f) totalDist = 0.1f;
+            
+            proj.progress += (proj.speed * ctx.dt) / totalDist;
+            
+            if (proj.progress >= 1.0f) {
+                if (registry.valid(proj.targetEntity)) {
+                    if (proj.isHeal) {
+                        if (registry.all_of<DesktopHeroComponent>(proj.targetEntity)) {
+                            auto& th = registry.get<DesktopHeroComponent>(proj.targetEntity);
+                            th.hp += proj.damage; if (th.hp > th.maxHp) th.hp = th.maxHp;
+                        } else if (registry.all_of<DesktopCastleComponent>(proj.targetEntity)) {
+                            auto& tc = registry.get<DesktopCastleComponent>(proj.targetEntity);
+                            tc.hp += proj.damage; if (tc.hp > tc.maxHp) tc.hp = tc.maxHp;
+                        }
+                        CreateHealText(registry, tx - 20.0f, ty - 40.0f, proj.damage, ctx.isStowed);
+                    } else if (registry.all_of<DesktopEnemyComponent>(proj.targetEntity)) {
+                        auto& enemy = registry.get<DesktopEnemyComponent>(proj.targetEntity);
+                        enemy.hp -= proj.damage;
+                        totalDamage += proj.damage;
+                        auto eff = CreateDamageText(registry, tx - 20.0f + (rand() % 40 - 20.0f), ty - 40.0f + (rand() % 40 - 20.0f), proj.damage, ctx.isStowed);
+                        registry.get<UITextComponent>(eff).color = ctx.isStowed ? DirectX::XMFLOAT4{0.2f, 0.4f, 1.0f, 0.6f} : DirectX::XMFLOAT4{0.2f, 0.4f, 1.0f, 1.0f}; // 青色
+                    }
+                    DirectX::XMFLOAT4 pColor = proj.isHeal ? DirectX::XMFLOAT4{0.2f, 1.0f, 0.2f, 1.0f} : DirectX::XMFLOAT4{0.2f, 0.4f, 1.0f, 1.0f};
+                    CreateDamageParticle(registry, ctx, tx, ty, "Resources/Textures/soft_circle.png", pColor, ctx.isStowed ? 5.0f : 32.0f);
+                }
+                projsToDestroy.push_back(pEnt);
+            } else {
+                float currentX = proj.startX + dx * proj.progress;
+                float currentY = proj.startY + dy * proj.progress;
+                // 弧を描くためのオフセット (二次関数: y = -4h * x * (x - 1))
+                float arcY = -4.0f * proj.arcHeight * proj.progress * (proj.progress - 1.0f);
+                pRect.pos.x = currentX;
+                pRect.pos.y = currentY - arcY;
+            }
+        }
+        for (auto e : projsToDestroy) {
             registry.destroy(e);
         }
         

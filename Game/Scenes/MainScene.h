@@ -114,8 +114,21 @@ private:
     // ★追加: ログ領域用
     std::vector<entt::entity> logTextEntities_;
     std::vector<std::string> logMessages_;
+    int logScrollOffset_ = 0;
+    void UpdateLogUI();
     
     int ugcTargetCharIndex_ = 0;
+    
+    // UI Popups
+    std::vector<entt::entity> popupEntities_;
+    void ShowEquipPopup(int roleIdx);
+    void ShowRelicPopup();
+    void ShowPrestigePopup();
+    void ClosePopup();
+    
+    int currentEquipRoleIdx_ = -1;
+    int equipPopupPage_ = 0;
+    
 public:
     void AddLog(const std::string& msg);
 };
