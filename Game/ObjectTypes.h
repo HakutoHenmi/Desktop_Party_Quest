@@ -252,6 +252,71 @@ struct CameraTargetComponent : public Component {
 };
 
 // ★追加: デスクトップパーティー用支援コンポーネント
+// --- Hack & Slash Equipment System ---
+enum class EquipRarity { Common, Rare, Epic, Artifact };
+enum class EquipType { USB, Board, Capacitor, Fan, Cable };
+
+struct Equipment {
+    uint32_t id = 0;
+    std::string name = "Unknown Part";
+    EquipRarity rarity = EquipRarity::Common;
+    EquipType type = EquipType::USB;
+    float atkMul = 0.0f; // 攻撃力補正 (e.g. 0.05 for +5%)
+    float spdMul = 0.0f; // 速度補正
+    float hpMul = 0.0f;  // 最大HP補正
+    std::string flavorText = "";
+    
+    // UI用カラー取得ヘルパー
+    DirectX::XMFLOAT4 GetRarityColor() const {
+        switch (rarity) {
+            case EquipRarity::Rare:     return {0.2f, 0.6f, 1.0f, 1.0f}; // 青
+            case EquipRarity::Epic:     return {0.8f, 0.2f, 0.8f, 1.0f}; // 紫
+            case EquipRarity::Artifact: return {1.0f, 0.8f, 0.2f, 1.0f}; // 金
+            case EquipRarity::Common: 
+            default:                    return {0.8f, 0.8f, 0.8f, 1.0f}; // 灰
+        }
+    }
+    std::string GetRarityName() const {
+        switch (rarity) {
+            case EquipRarity::Rare:     return "Rare";
+            case EquipRarity::Epic:     return "Epic";
+            case EquipRarity::Artifact: return "Artifact";
+            case EquipRarity::Common: 
+            default:                    return "Common";
+        }
+    }
+};
+
+// --- Gacha Relic System ---
+struct InternetRelic {
+    uint32_t id = 0;
+    std::string name = "Unknown Data";
+    std::string description = "";
+    bool isUnlocked = false;
+    float globalAtkBuff = 0.0f; // パーティ全体へのバフ
+    float globalHpBuff = 0.0f;
+    float globalSpdBuff = 0.0f;
+};
+
+// --- Player Progress & Inventory ---
+struct DesktopPartyProgressComponent : public Component {
+    std::vector<Equipment> inventory;
+    std::vector<InternetRelic> relicEncyclopedia;
+    int dataFragments = 0;
+    
+    // 各役職の装備ID(-1で未装備) [Tank, Sniper, Scout, Engineer, Healer]
+    std::vector<int> equippedIds = {-1, -1, -1, -1, -1};
+    
+    // 雇用済みの兵士リスト (HeroRoleのintキャスト)
+    std::vector<int> hiredRoles = {0, 1, 2, 4}; // 初期メンバー: Tank(0), Sniper(1), Scout(2), Healer(4)
+    int maxDeploymentLimit = 4;
+    
+    // オフラインボーナス用
+    long long lastSavedTime = 0; // UNIX Time
+    
+    DesktopPartyProgressComponent() { type = static_cast<ComponentType>(1007); }
+};
+
 struct FocusAuraTag : public Component {
 	FocusAuraTag() { type = static_cast<ComponentType>(1005); }
 };

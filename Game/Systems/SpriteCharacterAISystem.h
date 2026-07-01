@@ -1,6 +1,7 @@
 #pragma once
 #include "ISystem.h"
 #include <random>
+#include <string>
 
 namespace Game {
 
@@ -27,6 +28,13 @@ public:
             auto& ai = view.get<SpriteCharacterAIComponent>(entity);
             auto& rect = view.get<RectTransformComponent>(entity);
             if (!rect.enabled) continue;
+            
+            // TD用のヒーローはDesktopCombatSystemで制御するため、このシステムでは無視する
+            if (registry.all_of<NameComponent>(entity)) {
+                if (registry.get<NameComponent>(entity).name.find("Char_") == 0) {
+                    continue;
+                }
+            }
             
             if (justUnstowed) {
                 // 格納解除時に右端のUI裏に隠れないよう、画面左側にテレポートさせる

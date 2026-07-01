@@ -204,7 +204,7 @@ void WorkEnergySystem::Update(entt::registry& registry, GameContext& ctx) {
     auto view = registry.view<NameComponent, UITextComponent>();
     for (auto entity : view) {
         auto& name = view.get<NameComponent>(entity);
-        if (name.name == "CommandHeaderEV") {
+        if (name.name == "CommandHeaderWEV") {
             auto& text = view.get<UITextComponent>(entity);
             char buf[64];
             snprintf(buf, sizeof(buf), "%d / %d", static_cast<int>(currentEnergy_), static_cast<int>(kMaxEnergy));
