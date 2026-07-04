@@ -117,8 +117,8 @@ void WorkEnergySystem::Update(entt::registry& registry, GameContext& ctx) {
 
     // 宝箱獲得判定
     auto chestViewProg = registry.view<DesktopPartyProgressComponent>();
-    for (auto entity : chestViewProg) {
-        auto& prog = registry.get<DesktopPartyProgressComponent>(entity);
+    if (!chestViewProg.empty()) {
+        auto& prog = registry.get<DesktopPartyProgressComponent>(chestViewProg.front());
         
         while (currentEnergy_ >= prog.chestEnergyTarget) {
             currentEnergy_ -= prog.chestEnergyTarget;
@@ -129,7 +129,6 @@ void WorkEnergySystem::Update(entt::registry& registry, GameContext& ctx) {
                 mainScene->AddLog(">>> 作業エネルギーが目標に到達！ 宝箱を1つ獲得しました。");
             }
         }
-        break;
     }
 
     // ★ UIへの反映（エネルギー値の更新）

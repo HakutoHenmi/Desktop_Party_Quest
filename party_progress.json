@@ -1,8 +1,8 @@
 {
     "availableChests": 1,
     "chestEnergyTarget": 700,
-    "currentGold": 6.98527721518513e+15,
-    "currentStage": 39,
+    "currentGold": 7.98527745441584e+15,
+    "currentStage": 45,
     "currentTheme": 3,
     "dataFragments": 4,
     "equippedIds": [
@@ -2697,9 +2697,249 @@
             "rarity": 0,
             "spdMul": 0.8508099317550659,
             "type": 2
+        },
+        {
+            "atkMul": 0.47353827953338623,
+            "flavorText": "",
+            "hpMul": 0.5471997261047363,
+            "id": 252,
+            "name": "LANケーブル (Lv11)",
+            "rarity": 0,
+            "spdMul": 0.45775365829467773,
+            "type": 4
+        },
+        {
+            "atkMul": 0.5797433257102966,
+            "flavorText": "",
+            "hpMul": 0.448204904794693,
+            "id": 253,
+            "name": "LANケーブル (Lv10)",
+            "rarity": 0,
+            "spdMul": 0.4774356782436371,
+            "type": 4
+        },
+        {
+            "atkMul": 0.793322741985321,
+            "flavorText": "",
+            "hpMul": 0.7664303779602051,
+            "id": 254,
+            "name": "LANケーブル (Lv9)",
+            "rarity": 1,
+            "spdMul": 0.8000457882881165,
+            "type": 4
+        },
+        {
+            "atkMul": 1.3890455961227417,
+            "flavorText": "",
+            "hpMul": 1.2475687265396118,
+            "id": 255,
+            "name": "冷却ファン (Lv14)",
+            "rarity": 2,
+            "spdMul": 1.131814956665039,
+            "type": 3
+        },
+        {
+            "atkMul": 0.7639750242233276,
+            "flavorText": "",
+            "hpMul": 0.7639750242233276,
+            "id": 256,
+            "name": "USBメモリ (Lv11)",
+            "rarity": 1,
+            "spdMul": 0.833427369594574,
+            "type": 0
+        },
+        {
+            "atkMul": 0.8694396018981934,
+            "flavorText": "",
+            "hpMul": 0.7941997051239014,
+            "id": 257,
+            "name": "USBメモリ (Lv17)",
+            "rarity": 0,
+            "spdMul": 0.7774797081947327,
+            "type": 0
+        },
+        {
+            "atkMul": 1.2967641353607178,
+            "flavorText": "",
+            "hpMul": 1.1658979654312134,
+            "id": 258,
+            "name": "拡張基板 (Lv16)",
+            "rarity": 1,
+            "spdMul": 1.2253824472427368,
+            "type": 1
+        },
+        {
+            "atkMul": 0.9316036105155945,
+            "flavorText": "",
+            "hpMul": 0.9755472540855408,
+            "id": 259,
+            "name": "LANケーブル (Lv18)",
+            "rarity": 0,
+            "spdMul": 0.8349278569221497,
+            "type": 4
+        },
+        {
+            "atkMul": 1.0546456575393677,
+            "flavorText": "",
+            "hpMul": 1.5160530805587769,
+            "id": 260,
+            "name": "USBメモリ (Lv18)",
+            "rarity": 1,
+            "spdMul": 1.06782865524292,
+            "type": 0
+        },
+        {
+            "atkMul": 1.504799485206604,
+            "flavorText": "",
+            "hpMul": 1.0658996105194092,
+            "id": 261,
+            "name": "拡張基板 (Lv17)",
+            "rarity": 1,
+            "spdMul": 1.040819525718689,
+            "type": 1
+        },
+        {
+            "atkMul": 0.6540089249610901,
+            "flavorText": "",
+            "hpMul": 0.5671936273574829,
+            "id": 262,
+            "name": "LANケーブル (Lv11)",
+            "rarity": 0,
+            "spdMul": 0.5035290122032166,
+            "type": 4
+        },
+        {
+            "atkMul": 1.0822980403900146,
+            "flavorText": "",
+            "hpMul": 1.0929087400436401,
+            "id": 263,
+            "name": "冷却ファン (Lv14)",
+            "rarity": 1,
+            "spdMul": 0.9761903882026672,
+            "type": 3
+        },
+        {
+            "atkMul": 0.8876600861549377,
+            "flavorText": "",
+            "hpMul": 0.9403924345970154,
+            "id": 264,
+            "name": "拡張基板 (Lv18)",
+            "rarity": 0,
+            "spdMul": 0.9931246638298035,
+            "type": 1
+        },
+        {
+            "atkMul": 0.5221782326698303,
+            "flavorText": "",
+            "hpMul": 0.7148868441581726,
+            "id": 265,
+            "name": "LANケーブル (Lv12)",
+            "rarity": 0,
+            "spdMul": 0.6838048100471497,
+            "type": 4
+        },
+        {
+            "atkMul": 0.8771564960479736,
+            "flavorText": "",
+            "hpMul": 0.8273180723190308,
+            "id": 266,
+            "name": "LANケーブル (Lv13)",
+            "rarity": 1,
+            "spdMul": 0.9768334031105042,
+            "type": 4
+        },
+        {
+            "atkMul": 1.423771619796753,
+            "flavorText": "",
+            "hpMul": 1.3710392713546753,
+            "id": 267,
+            "name": "拡張基板 (Lv18)",
+            "rarity": 1,
+            "spdMul": 1.2919409275054932,
+            "type": 1
+        },
+        {
+            "atkMul": 1.0194908380508423,
+            "flavorText": "",
+            "hpMul": 1.00191330909729,
+            "id": 268,
+            "name": "拡張基板 (Lv18)",
+            "rarity": 0,
+            "spdMul": 0.9579698443412781,
+            "type": 1
+        },
+        {
+            "atkMul": 0.8681533932685852,
+            "flavorText": "",
+            "hpMul": 0.6511150002479553,
+            "id": 269,
+            "name": "USBメモリ (Lv10)",
+            "rarity": 1,
+            "spdMul": 0.8440379500389099,
+            "type": 0
+        },
+        {
+            "atkMul": 0.6932366490364075,
+            "flavorText": "",
+            "hpMul": 0.5871289968490601,
+            "id": 270,
+            "name": "USBメモリ (Lv14)",
+            "rarity": 0,
+            "spdMul": 0.7073843479156494,
+            "type": 0
+        },
+        {
+            "atkMul": 1.228919506072998,
+            "flavorText": "",
+            "hpMul": 1.2038395404815674,
+            "id": 271,
+            "name": "USBメモリ (Lv17)",
+            "rarity": 1,
+            "spdMul": 1.0157395601272583,
+            "type": 0
+        },
+        {
+            "atkMul": 0.721103310585022,
+            "flavorText": "",
+            "hpMul": 0.5905587077140808,
+            "id": 272,
+            "name": "冷却ファン (Lv12)",
+            "rarity": 0,
+            "spdMul": 0.6838048100471497,
+            "type": 3
+        },
+        {
+            "atkMul": 1.0282827615737915,
+            "flavorText": "強力だがウイルスが混入している。",
+            "hpMul": -0.10000000149011612,
+            "id": 273,
+            "name": "[感染] コンデンサ (Lv9)",
+            "rarity": 2,
+            "spdMul": 0.8677246570587158,
+            "type": 2
+        },
+        {
+            "atkMul": 1.0443564653396606,
+            "flavorText": "",
+            "hpMul": 1.0816549062728882,
+            "id": 274,
+            "name": "拡張基板 (Lv12)",
+            "rarity": 2,
+            "spdMul": 1.3800424337387085,
+            "type": 1
+        },
+        {
+            "atkMul": 0.7448756694793701,
+            "flavorText": "",
+            "hpMul": 0.974775493144989,
+            "id": 275,
+            "name": "冷却ファン (Lv17)",
+            "rarity": 0,
+            "spdMul": 0.7632676362991333,
+            "type": 3
         }
     ],
-    "lastSavedTime": 1783065713,
+    "lastSavedTime": 1783148933,
     "maxDeploymentLimit": 160,
     "prestigeCount": 1,
     "prestigePoints": 1,
@@ -2765,10 +3005,10 @@
         false,
         true
     ],
-    "totalDamage": 225248307174903.1,
-    "totalGoldEarned": 2.1000000057010376e+16,
+    "totalDamage": 319564976589536.2,
+    "totalGoldEarned": 2.2000000296241064e+16,
     "totalItems": 0,
-    "totalKills": 764,
+    "totalKills": 834,
     "ugcTexturePaths": [
         "",
         "C:\\Users\\k024g\\OneDrive\\画像\\スクリーンショット\\IMG_4402.jpg",
