@@ -152,23 +152,16 @@ private:
                         rootPath = current;
                         return rootPath;
                     }
-                    // Check child "Desktop_Party_Quest" folder
-                    if (std::filesystem::exists(current / "Desktop_Party_Quest") && 
-                        (HasProjectFile(current / "Desktop_Party_Quest") || std::filesystem::exists(current / "Desktop_Party_Quest" / ".git"))) {
-                        rootPath = current / "Desktop_Party_Quest";
-                        return rootPath;
-                    }
-                    // Check child "Sae" folder
-                    if (std::filesystem::exists(current / "Sae") && 
-                        (HasProjectFile(current / "Sae") || std::filesystem::exists(current / "Sae" / ".git"))) {
-                        rootPath = current / "Sae";
-                        return rootPath;
-                    }
-                    // Check child "neo_Engine" folder
-                    if (std::filesystem::exists(current / "neo_Engine") && 
-                        (HasProjectFile(current / "neo_Engine") || std::filesystem::exists(current / "neo_Engine" / ".git"))) {
-                        rootPath = current / "neo_Engine";
-                        return rootPath;
+                    // Check child directories for project markers
+                    for (const auto& entry : std::filesystem::directory_iterator(current)) {
+                        if (entry.is_directory()) {
+                            if (HasProjectFile(entry.path()) || 
+                                std::filesystem::exists(entry.path() / ".git") || 
+                                std::filesystem::exists(entry.path() / "Resources" / "shaders")) {
+                                rootPath = entry.path();
+                                return rootPath;
+                            }
+                        }
                     }
                 } catch (...) {}
             }

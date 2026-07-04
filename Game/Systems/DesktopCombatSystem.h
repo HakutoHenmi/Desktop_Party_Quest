@@ -1382,8 +1382,8 @@ public:
                         int specialArrowType = -1;
                         if (hero.role == HeroRole::Sniper || hero.role == HeroRole::Scout) {
                             auto arrowViewProg = registry.view<DesktopPartyProgressComponent>();
-                            for (auto entityProg : arrowViewProg) {
-                                auto& prog = registry.get<DesktopPartyProgressComponent>(entityProg);
+                            if (!arrowViewProg.empty()) {
+                                auto& prog = registry.get<DesktopPartyProgressComponent>(arrowViewProg.front());
                                 std::vector<int> availableSpecials;
                                 for (int i=0; i<3; ++i) if (prog.specialArrows[i] > 0) availableSpecials.push_back(i);
                                 
@@ -1391,7 +1391,6 @@ public:
                                     specialArrowType = availableSpecials[rand() % availableSpecials.size()];
                                     // 矢は消費しない（永続）
                                 }
-                                break;
                             }
                         }
                         
