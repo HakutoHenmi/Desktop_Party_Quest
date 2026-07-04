@@ -304,11 +304,20 @@ struct DesktopPartyProgressComponent : public Component {
     std::vector<InternetRelic> relicEncyclopedia;
     int dataFragments = 0;
     
-    // 各役職の装備ID(-1で未装備) [Tank, Sniper, Scout, Engineer, Healer]
-    std::vector<int> equippedIds = {-1, -1, -1, -1, -1};
+    // 特殊矢システム
+    int availableChests = 0;
+    int chestEnergyTarget = 50;
+    std::vector<int> specialArrows = {0, 0, 0}; // 0: Explosive, 1: Ice, 2: Split
+    
+    // 各役職の装備ID(-1で未装備) [Tank(0~4), Sniper(5~9), Scout(10~14), Engineer(15~19), Healer(20~24)]
+    // 各ロールごとに5スロット(USB, Board, Capacitor, Fan, Cable)
+    std::vector<int> equippedIds = std::vector<int>(25, -1);
+    
+    // カスタム画像パス (Tank, Sniper, Scout, Engineer, Healer)
+    std::vector<std::string> ugcTexturePaths = {"", "", "", "", ""};
     
     // 雇用済みの兵士リスト (HeroRoleのintキャスト)
-    std::vector<int> hiredRoles = {0, 1, 2, 4}; // 初期メンバー: Tank(0), Sniper(1), Scout(2), Healer(4)
+    std::vector<int> hiredRoles = {1}; // 初期メンバー: Sniper(1)(ロングボウ)のみ
     int maxDeploymentLimit = 4;
     
     // オフラインボーナス用

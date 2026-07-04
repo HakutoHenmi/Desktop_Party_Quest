@@ -85,11 +85,13 @@ private:
     std::vector<std::unique_ptr<ISystem>> systems_;
 
     // UI Tabs
-    enum class TabType { Command, Shop, Status };
-    TabType currentTab_ = TabType::Shop;
+    enum class TabType { Command, Room, Upgrade, System, Status };
+    TabType currentTab_ = TabType::Command;
 
     entt::entity tabCommandBtn_ = entt::null;
-    entt::entity tabShopBtn_ = entt::null;
+    entt::entity tabRoomBtn_ = entt::null;
+    entt::entity tabUpgradeBtn_ = entt::null;
+    entt::entity tabSystemBtn_ = entt::null;
     entt::entity tabStatusBtn_ = entt::null;
     entt::entity tabActiveLine_ = entt::null;
 
@@ -98,7 +100,9 @@ private:
     entt::entity unstowBtn_ = entt::null;
 
     std::vector<entt::entity> commandTabEntities_;
-    std::vector<entt::entity> shopTabEntities_;
+    std::vector<entt::entity> roomTabEntities_;
+    std::vector<entt::entity> upgradeTabEntities_;
+    std::vector<entt::entity> systemTabEntities_;
     std::vector<entt::entity> statusTabEntities_;
 
     void SwitchTab(TabType newTab);
@@ -110,6 +114,7 @@ private:
 
     // ★追加: 外部システムへの参照
     DesktopCombatSystem* combatSys_ = nullptr;
+    class WorkEnergySystem* workSys_ = nullptr;
     
     // ★追加: ログ領域用
     std::vector<entt::entity> logTextEntities_;
@@ -124,10 +129,29 @@ private:
     void ShowEquipPopup(int roleIdx);
     void ShowRelicPopup();
     void ShowPrestigePopup();
+    void ShowGameOverPopup();
     void ClosePopup();
     
     int currentEquipRoleIdx_ = -1;
-    int equipPopupPage_ = 0;
+    float equipPopupScrollY_ = 0.0f;
+    int equipPopupActiveSlot_ = 0; // 0: USB(頭), 1: Board(胴), 2: Capacitor(手), 3: Fan(足), 4: Cable(腰)
+    int equipPopupFilterRarity_ = -1; // -1: All
+    
+    // ツールチップ用
+    struct EquipHoverRect {
+        float x, y, w, h;
+        Game::Equipment eq;
+    };
+    std::vector<EquipHoverRect> equipHoverRects_;
+    std::vector<entt::entity> tooltipEntities_;
+    void UpdateTooltip(float mouseX, float mouseY);
+    
+    enum class FadeState { None, FadingOut, FadingIn };
+    enum class ResetType { None, NormalPrestige, GameOverPrestige, GameOverRetry, HardReset };
+    FadeState fadeState_ = FadeState::None;
+    ResetType fadeResetType_ = ResetType::None;
+    float fadeTimer_ = 0.0f;
+    entt::entity fadeOverlay_ = entt::null;
     
 public:
     void AddLog(const std::string& msg);

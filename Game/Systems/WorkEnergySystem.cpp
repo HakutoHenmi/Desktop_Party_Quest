@@ -32,7 +32,6 @@ void WorkEnergySystem::Reset(entt::registry& /*registry*/) {
 }
 
 void WorkEnergySystem::Update(entt::registry& registry, GameContext& ctx) {
-    float dt = ctx.dt;
     bool hasActivityThisFrame = false;
 
     // 1. Calculate mouse movement distance
@@ -114,113 +113,48 @@ void WorkEnergySystem::Update(entt::registry& registry, GameContext& ctx) {
         }
     }
 
-    // Decay energy over time (何もしないと少しずつ減る)
-    if (!hasActivityThisFrame && currentEnergy_ > 0.0f) {
-        currentEnergy_ -= 1.0f * dt;
-        if (currentEnergy_ < 0.0f) currentEnergy_ = 0.0f;
-    }
-    
-    // アクティブ支援発動 (エネルギーが100に達したら即時発動)
-    if (currentEnergy_ >= kMaxEnergy) {
-        currentEnergy_ -= kMaxEnergy;
+    // Decay energy は溜めることができるように削除
+
+    // 宝箱獲得判定
+    auto chestViewProg = registry.view<DesktopPartyProgressComponent>();
+    for (auto entity : chestViewProg) {
+        auto& prog = registry.get<DesktopPartyProgressComponent>(entity);
         
-        if (auto mainScene = dynamic_cast<MainScene*>(ctx.scene)) {
-            mainScene->AddLog(">>> エネルギー充填完了！エンジニアがシステムブーストを発動！");
-        }
-        
-        float spawnX = 1000.0f;
-        float spawnY = 500.0f;
-        auto engView = registry.view<DesktopHeroComponent, RectTransformComponent>();
-        bool engineerFound = false;
-        
-        for (auto e : engView) {
-            if (engView.get<DesktopHeroComponent>(e).role == HeroRole::Engineer) {
-                auto& r = engView.get<RectTransformComponent>(e);
-                spawnX = r.pos.x + r.size.x / 2.0f;
-                spawnY = r.pos.y - 30.0f;
-                engineerFound = true;
-                break;
+        while (currentEnergy_ >= prog.chestEnergyTarget) {
+            currentEnergy_ -= prog.chestEnergyTarget;
+            prog.chestEnergyTarget += 50;
+            prog.availableChests++;
+            
+            if (auto mainScene = dynamic_cast<MainScene*>(ctx.scene)) {
+                mainScene->AddLog(">>> 作業エネルギーが目標に到達！ 宝箱を1つ獲得しました。");
             }
         }
-        
-        // 演出テキスト（エンジニアの頭上）
-        if (engineerFound && !ctx.isStowed) {
-            auto eff = registry.create();
-            auto& t = registry.emplace<RectTransformComponent>(eff);
-            t.anchor = {0.0f, 0.0f}; t.pivot = {0.5f, 0.5f};
-            t.pos = {spawnX, spawnY};
-            t.size = {200, 40};
-            auto& txt = registry.emplace<UITextComponent>(eff);
-            txt.text = "[ SYSTEM BOOST! ]";
-            txt.fontSize = 24.0f;
-            txt.color = {0.2f, 1.0f, 0.5f, 1.0f}; // 蛍光グリーン
-            
-            auto& dmgText = registry.emplace<DesktopDamageTextComponent>(eff);
-            dmgText.lifetime = 2.0f;
-            dmgText.maxLifetime = 2.0f;
-            dmgText.velocity = {0, -30.0f};
-            
-            // ☕の代わりに回復オーラの画像エフェクトを重ねる
-            auto imgEff = registry.create();
-            auto& tImg = registry.emplace<RectTransformComponent>(imgEff);
-            tImg.anchor = {0.0f, 0.0f}; tImg.pivot = {0.5f, 0.5f};
-            tImg.pos = {spawnX, spawnY - 10.0f};
-            tImg.size = {64, 64};
-            auto& img = registry.emplace<UIImageComponent>(imgEff);
-            img.texturePath = "Resources/Textures/soft_circle.png";
-            img.color = {0.2f, 0.8f, 1.0f, 1.0f}; // 水色
-            img.layer = -6;
-            if (ctx.renderer) img.textureHandle = ctx.renderer->LoadTexture2D(img.texturePath);
-            auto& dmgTextImg = registry.emplace<DesktopDamageTextComponent>(imgEff);
-            dmgTextImg.lifetime = 2.0f;
-            dmgTextImg.maxLifetime = 2.0f;
-            dmgTextImg.velocity = {0, -40.0f};
-        }
-        
-        // パーティ全体を回復
-        for (auto e : engView) {
-            auto& hero = engView.get<DesktopHeroComponent>(e);
-            hero.hp += 50.0f; // 大回復
-            if (hero.hp > hero.maxHp) hero.hp = hero.maxHp;
-            
-            if (!ctx.isStowed) {
-                auto& r = engView.get<RectTransformComponent>(e);
-                // 個別の回復エフェクト
-                auto eff2 = registry.create();
-                auto& t2 = registry.emplace<RectTransformComponent>(eff2);
-                t2.anchor = {0.0f, 0.0f}; t2.pivot = {0.5f, 0.5f};
-                t2.pos = {r.pos.x + r.size.x/2, r.pos.y + r.size.y/2 - 20.0f};
-                t2.size = {100, 30};
-                auto& txt2 = registry.emplace<UITextComponent>(eff2);
-                txt2.text = "+50";
-                txt2.fontSize = 20.0f;
-                txt2.color = {0.2f, 1.0f, 0.2f, 1.0f};
-                registry.emplace<DesktopDamageTextComponent>(eff2);
-            }
-        }
+        break;
     }
 
     // ★ UIへの反映（エネルギー値の更新）
-    auto view = registry.view<NameComponent, UITextComponent>();
-    for (auto entity : view) {
-        auto& name = view.get<NameComponent>(entity);
+    int targetEnergy = 50;
+    auto targetViewProg = registry.view<DesktopPartyProgressComponent>();
+    targetViewProg.each([&](auto /*entity*/, auto& prog) {
+        targetEnergy = prog.chestEnergyTarget;
+    });
+
+    auto uiView = registry.view<NameComponent, UITextComponent>();
+    uiView.each([&](auto /*entity*/, auto& name, auto& text) {
         if (name.name == "CommandHeaderWEV") {
-            auto& text = view.get<UITextComponent>(entity);
             char buf[64];
-            snprintf(buf, sizeof(buf), "%d / %d", static_cast<int>(currentEnergy_), static_cast<int>(kMaxEnergy));
+            snprintf(buf, sizeof(buf), "%d / %d", static_cast<int>(currentEnergy_), targetEnergy);
             text.text = buf;
         } else if (name.name == "BottomText") {
-            auto& text = view.get<UITextComponent>(entity);
             char buf[128];
-            snprintf(buf, sizeof(buf), "Desktop Party Quest  |  作業エネルギー収集モード... [%d / %d]", static_cast<int>(currentEnergy_), static_cast<int>(kMaxEnergy));
+            snprintf(buf, sizeof(buf), "Desktop Party Quest  |  作業エネルギー収集モード... [%d / %d]", static_cast<int>(currentEnergy_), targetEnergy);
             text.text = buf;
         } else if (name.name == "RightText") {
-            auto& text = view.get<UITextComponent>(entity);
             char buf[128];
-            snprintf(buf, sizeof(buf), "D\nP\nQ\n\n[%d\n/\n%d]", static_cast<int>(currentEnergy_), static_cast<int>(kMaxEnergy));
+            snprintf(buf, sizeof(buf), "D\nP\nQ\n\n[%d\n/\n%d]", static_cast<int>(currentEnergy_), targetEnergy);
             text.text = buf;
         }
-    }
+    });
 }
 
 void WorkEnergySystem::AddEnergy(float amount) {
