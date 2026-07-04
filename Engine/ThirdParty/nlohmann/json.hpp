@@ -27,6 +27,9 @@
 #endif  // JSON_NO_IO
 #include <iterator> // random_access_iterator_tag
 #include <memory> // unique_ptr
+#pragma warning(push)
+#pragma warning(disable: 26495)
+
 #include <string> // string, stoi, to_string
 #include <utility> // declval, forward, move, pair, swap
 #include <vector> // vector
@@ -5382,5 +5385,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 #endif
 
 #include <nlohmann/detail/macro_unscope.hpp>
+
+#pragma warning(pop)
 
 #endif  // INCLUDE_NLOHMANN_JSON_HPP_

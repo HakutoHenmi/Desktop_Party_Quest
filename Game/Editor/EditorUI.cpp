@@ -1,4 +1,4 @@
-﻿#include "EditorUI.h"
+#include "EditorUI.h"
 #include "../../Engine/PathUtils.h"
 #include "../../externals/imgui/imgui.h"
 #include "../../externals/imgui/imgui_internal.h"
@@ -37,7 +37,10 @@ struct EnemySpawnerEditor { static void Show(MainScene*, entt::entity) {} };
 #include <string>
 #include <Windows.h>
 #include <commdlg.h>
+#pragma warning(push)
+#pragma warning(disable: 26495)
 #include "../../Engine/ThirdParty/nlohmann/json.hpp"
+#pragma warning(pop)
 using json = nlohmann::json;
 
 namespace Game {
